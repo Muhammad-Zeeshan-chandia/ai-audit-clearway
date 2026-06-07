@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { verifySignature } from "@/lib/n8n";
 import { sendStaffAuditReadyEmail } from "@/lib/email";
+import { CATEGORIES, SCORE_TO_RAG } from "@/lib/constants/categories";
 
 interface CategoryPayload {
   category_number: number;
@@ -25,16 +26,35 @@ interface AuditCompletePayload {
   total_opportunity_gbp: number;
   final_tier: string;
   audit_size_score?: number;
+  executive_summary?: string;
   flagged_for_review: boolean;
   flag_reasons: string[];
-  executive_summary?: string;
   pdf_path: string;
+}
+
+function validatePayload(payload: AuditCompletePayload): string | null {
+  if (!payload.audit_id) return "audit_id is required";
+  if (!Array.isArray(payload.categories) || payload.categories.length === 0) {
+    return "categories array is required";
+  }
+
+  for (const cat of payload.categories) {
+    // score must be integer 1–5
+    if (!Number.isInteger(cat.score) || cat.score < 1 || cat.score > 5) {
+      return `category ${cat.category_number}: score must be an integer 1–5, got ${cat.score}`;
+    }
+    // confidence must be integer 0–100
+    if (!Number.isInteger(cat.confidence) || cat.confidence < 0 || cat.confidence > 100) {
+      return `category ${cat.category_number}: confidence must be an integer 0–100, got ${cat.confidence}`;
+    }
+  }
+
+  return null;
 }
 
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
 
-  // Verify HMAC signature
   const signature = request.headers.get("X-Clearway-Signature") ?? "";
   if (process.env.N8N_WEBHOOK_SECRET && !verifySignature(rawBody, signature)) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
@@ -47,9 +67,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  const validationError = validatePayload(payload);
+  if (validationError) {
+    const service = createServiceClient();
+    await service.from("webhook_logs").insert({
+      direction: "incoming",
+      endpoint: "/api/webhooks/audit-complete",
+      payload,
+      response_status: 422,
+      response_body: `Validation failed: ${validationError}`,
+      audit_id: payload.audit_id ?? null,
+    });
+    return NextResponse.json({ error: validationError }, { status: 422 });
+  }
+
   const service = createServiceClient();
 
-  // Log the incoming webhook first
   await service.from("webhook_logs").insert({
     direction: "incoming",
     endpoint: "/api/webhooks/audit-complete",
@@ -59,7 +92,6 @@ export async function POST(request: NextRequest) {
     audit_id: payload.audit_id,
   });
 
-  // Verify audit exists
   const { data: audit, error: auditError } = await service
     .from("audits")
     .select("id, client_id, status")
@@ -70,40 +102,50 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Audit not found" }, { status: 404 });
   }
 
-  // 1. Insert 6 category rows (upsert on audit_id + category_number)
-  const categoryRows = payload.categories.map((cat) => ({
-    audit_id: payload.audit_id,
-    category_number: cat.category_number,
-    category_name: cat.category_name,
-    score: cat.score,
-    rag: cat.rag,
-    confidence: cat.confidence,
-    gbp_impact_annual: cat.gbp_impact_annual,
-    gbp_calculation: cat.gbp_calculation,
-    evidence: cat.evidence,
-    solution_category: cat.solution_category,
-    report_section: cat.report_section,
-    insufficient_data: cat.insufficient_data,
-    used_defaults: cat.used_defaults,
-    contradiction_flag: cat.contradiction_flag,
-  }));
+  // Build category rows — server-recomputes RAG from score (n8n's value is informational)
+  const categoryRows = payload.categories.map((cat) => {
+    const canonicalCategory = CATEGORIES.find((c) => c.number === cat.category_number);
+    if (canonicalCategory && cat.category_name !== canonicalCategory.name) {
+      console.warn(
+        `[audit-complete] category ${cat.category_number} name mismatch: ` +
+        `n8n sent "${cat.category_name}", expected "${canonicalCategory.name}" — using canonical name`
+      );
+    }
+    return {
+      audit_id: payload.audit_id,
+      category_number: cat.category_number,
+      category_name: canonicalCategory?.name ?? cat.category_name,
+      score: cat.score,
+      rag: SCORE_TO_RAG(cat.score) ?? cat.rag,
+      confidence: cat.confidence,
+      gbp_impact_annual: cat.gbp_impact_annual,
+      gbp_calculation: cat.gbp_calculation,
+      evidence: cat.evidence,
+      solution_category: cat.solution_category,
+      report_section: cat.report_section,
+      insufficient_data: cat.insufficient_data,
+      used_defaults: cat.used_defaults,
+      contradiction_flag: cat.contradiction_flag,
+    };
+  });
 
   const { error: categoryError } = await service
     .from("audit_categories")
     .upsert(categoryRows, { onConflict: "audit_id,category_number" });
 
   if (categoryError) {
-    console.error("[audit-complete] category insert error:", categoryError);
+    console.error("[audit-complete] category upsert error:", categoryError);
     return NextResponse.json({ error: categoryError.message }, { status: 500 });
   }
 
-  // 2. Update audit row
   const { error: updateError } = await service
     .from("audits")
     .update({
       status: "awaiting_review",
       total_opportunity_gbp: payload.total_opportunity_gbp,
       final_tier: payload.final_tier,
+      audit_size_score: payload.audit_size_score ?? null,
+      executive_summary: payload.executive_summary ?? null,
       flagged_for_review: payload.flagged_for_review,
       flag_reasons: payload.flag_reasons,
       pdf_path: payload.pdf_path,
@@ -116,7 +158,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
-  // 3. Audit log
   await service.from("audit_log").insert({
     actor_id: null,
     action: "audit.completed",
@@ -130,7 +171,6 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  // 4. Notify staff/admin via email + in-app notification
   const { data: staffUsers } = await service
     .from("users")
     .select("id, email")
@@ -143,11 +183,15 @@ export async function POST(request: NextRequest) {
     .single();
 
   const rawClients = auditWithClient?.clients as Array<{ business_name: string }> | null;
-  const businessName = (Array.isArray(rawClients) ? rawClients[0] : (rawClients as unknown as { business_name: string } | null))?.business_name ?? "Unknown business";
+  const businessName =
+    (Array.isArray(rawClients)
+      ? rawClients[0]
+      : (rawClients as unknown as { business_name: string } | null)
+    )?.business_name ?? "Unknown business";
+
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const staffEmails = (staffUsers ?? []).map((u) => u.email);
 
-  // Send email to all staff (non-blocking)
   if (staffEmails.length > 0 && process.env.RESEND_API_KEY) {
     sendStaffAuditReadyEmail({
       to: staffEmails,
@@ -158,13 +202,14 @@ export async function POST(request: NextRequest) {
     }).catch(() => {});
   }
 
-  // Create in-app notifications for all staff
   if ((staffUsers ?? []).length > 0) {
     await service.from("notifications").insert(
       (staffUsers ?? []).map((u) => ({
         user_id: u.id,
         type: "audit_ready_for_review",
-        title: payload.flagged_for_review ? `⚠️ Flagged audit ready — ${businessName}` : `Audit ready for review — ${businessName}`,
+        title: payload.flagged_for_review
+          ? `⚠️ Flagged audit ready — ${businessName}`
+          : `Audit ready for review — ${businessName}`,
         body: `${businessName} audit has completed and is awaiting your review.`,
         link: `/audits/${payload.audit_id}?tab=review`,
       }))

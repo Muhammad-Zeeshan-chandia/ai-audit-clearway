@@ -109,6 +109,7 @@ export async function fireRegeneratePdfWebhook(
   payload: {
     audit_id: string;
     categories: Array<{ category_number: number; report_section: string }>;
+    executive_summary?: string;
   },
   auditId: string
 ): Promise<void> {
