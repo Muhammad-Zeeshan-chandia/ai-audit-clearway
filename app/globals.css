@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Clearway design tokens */
+  --bg-primary:    #FFFFFF;
+  --bg-secondary:  #F8FAFC;
+  --bg-tertiary:   #F1F5F9;
+  --border:        #E2E8F0;
+  --border-strong: #CBD5E1;
+
+  --text-primary:   #0F172A;
+  --text-secondary: #475569;
+  --text-tertiary:  #94A3B8;
+
+  --accent:       #0F766E;
+  --accent-hover: #115E59;
+  --accent-light: #CCFBF1;
+
+  --success: #059669;
+  --warning: #D97706;
+  --danger:  #DC2626;
+}
+
+@keyframes indeterminate {
+  0%   { transform: translateX(-100%) scaleX(0.5); }
+  100% { transform: translateX(200%) scaleX(0.5); }
+}
+.animate-indeterminate {
+  animation: indeterminate 1.2s ease-in-out infinite;
+  width: 50% !important;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-size: 14px;
+  }
+
+  body {
+    font-family: "Inter", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Tabular numbers on monetary/count columns */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
