@@ -1,5 +1,6 @@
 import { createHmac } from "crypto";
 import { createServiceClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 function sign(body: string): string {
   const secret = process.env.N8N_WEBHOOK_SECRET ?? "";
@@ -8,7 +9,6 @@ function sign(body: string): string {
 
 export function verifySignature(body: string, signature: string): boolean {
   const expected = sign(body);
-  // Constant-time comparison
   if (expected.length !== signature.length) return false;
   let mismatch = 0;
   for (let i = 0; i < expected.length; i++) {
@@ -17,24 +17,77 @@ export function verifySignature(body: string, signature: string): boolean {
   return mismatch === 0;
 }
 
-interface RunAuditPayload {
-  audit_id: string;
+export interface AuditEnginePayload {
+  audit_id: string;                       // the audit to write results to (always new audit on rebuild)
+  previous_audit_id: string | null;       // null on initial run, set on rebuilds
   client_id: string;
+  rebuild_count: number;                  // 0 on initial run, 1+ on rebuilds
   transcript_path: string | null;
   website_url: string | null;
-  questionnaire: Record<string, unknown>;
+  questionnaire: Record<string, unknown>; // questionnaire.data jsonb
   client_meta: {
     business_name: string;
     sector: string | null;
     owner_name: string | null;
   };
+  discovery_call: Record<string, unknown> | null;
+  client_followups: Array<{
+    id: string;
+    response_text: string;
+    source: "email_form" | "manual";
+    submitted_at: string;
+  }>;
+  review_notes: string | null;            // null on initial run, set on rebuilds
   callback_url: string;
+}
+
+export interface SendQuestionnairePayload {
+  audit_id: string;
+  client_email: string;
+  client_name: string | null;
+  business_name: string;
+  magic_link: string;
+  is_resend: boolean;         // false = initial send, true = re-send
+}
+
+export interface EmailFollowupPayload {
+  audit_id: string;
+  client_email: string;
+  client_name: string | null;
+  business_name: string;
+  magic_link: string;
+  review_notes: string | null;
+}
+
+export interface DeletionConfirmationPayload {
+  client_email: string;
+  client_name: string | null;
+  grace_ends_at: string;      // ISO timestamp
+}
+
+/**
+ * Generates a Supabase magic link for the given email that, when clicked,
+ * authenticates the user and redirects to nextPath.
+ */
+export async function generateMagicLink(
+  service: SupabaseClient,
+  email: string,
+  nextPath: string
+): Promise<string | null> {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const { data, error } = await service.auth.admin.generateLink({
+    type: "magiclink",
+    email,
+    options: { redirectTo: `${appUrl}/auth/callback` },
+  });
+  if (error || !data?.properties?.hashed_token) return null;
+  return `${appUrl}/auth/callback?token_hash=${data.properties.hashed_token}&type=magiclink&next=${encodeURIComponent(nextPath)}`;
 }
 
 async function fireWebhook(
   urlEnvKey: string,
   payload: unknown,
-  auditId: string
+  auditId: string | null
 ): Promise<void> {
   const url = process.env[urlEnvKey];
   const service = createServiceClient();
@@ -79,8 +132,81 @@ async function fireWebhook(
   });
 }
 
+/**
+ * Loads everything the audit engine needs to build (or rebuild) an audit and
+ * returns it shaped as AuditEnginePayload. `auditId` is the audit to WRITE to
+ * (i.e. the new audit row on rebuild). `previousAuditId` is the row to source
+ * context from — pass the same id as `auditId` on initial run.
+ */
+export async function buildAuditEnginePayload(
+  service: SupabaseClient,
+  args: {
+    auditId: string;
+    previousAuditId: string;
+    rebuildCount: number;
+    reviewNotes: string | null;
+    callbackUrl: string;
+  }
+): Promise<AuditEnginePayload | null> {
+  const { auditId, previousAuditId, rebuildCount, reviewNotes, callbackUrl } = args;
+
+  const { data: newAudit } = await service
+    .from("audits")
+    .select("id, client_id, transcript_path, clients(business_name, sector, owner_name, website_url)")
+    .eq("id", auditId)
+    .single();
+
+  if (!newAudit) return null;
+
+  type ClientShape = { business_name: string; sector: string | null; owner_name: string | null; website_url: string | null };
+  const rawClients = newAudit.clients as ClientShape[] | null;
+  const client = Array.isArray(rawClients) ? rawClients[0] : (rawClients as unknown as ClientShape | null);
+  if (!client) return null;
+
+  // Latest questionnaire for the new audit (copied forward on rebuild)
+  const { data: questionnaire } = await service
+    .from("questionnaires")
+    .select("data")
+    .eq("audit_id", auditId)
+    .order("submitted_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: discoveryCall } = await service
+    .from("discovery_calls")
+    .select("*")
+    .eq("audit_id", auditId)
+    .maybeSingle();
+
+  // Followups come from the previous audit (history)
+  const { data: followups } = await service
+    .from("client_followups")
+    .select("id, response_text, source, submitted_at")
+    .eq("audit_id", previousAuditId)
+    .order("submitted_at", { ascending: true });
+
+  return {
+    audit_id: auditId,
+    previous_audit_id: previousAuditId === auditId ? null : previousAuditId,
+    client_id: newAudit.client_id,
+    rebuild_count: rebuildCount,
+    transcript_path: newAudit.transcript_path as string | null,
+    website_url: client.website_url,
+    questionnaire: (questionnaire?.data ?? {}) as Record<string, unknown>,
+    client_meta: {
+      business_name: client.business_name,
+      sector: client.sector,
+      owner_name: client.owner_name,
+    },
+    discovery_call: discoveryCall ? (discoveryCall as unknown as Record<string, unknown>) : null,
+    client_followups: (followups ?? []) as AuditEnginePayload["client_followups"],
+    review_notes: reviewNotes,
+    callback_url: callbackUrl,
+  };
+}
+
 export async function fireRunAuditWebhook(
-  payload: RunAuditPayload,
+  payload: AuditEnginePayload,
   auditId: string
 ): Promise<void> {
   return fireWebhook("N8N_RUN_AUDIT_WEBHOOK_URL", payload, auditId);
@@ -94,15 +220,31 @@ export async function fireSendAuditWebhook(
 }
 
 export async function fireRerunAuditWebhook(
-  payload: {
-    audit_id: string;
-    client_id: string;
-    review_notes: string;
-    callback_url: string;
-  },
+  payload: AuditEnginePayload,
   auditId: string
 ): Promise<void> {
   return fireWebhook("N8N_RERUN_WEBHOOK_URL", payload, auditId);
+}
+
+export async function fireSendQuestionnaireWebhook(
+  payload: SendQuestionnairePayload,
+  auditId: string
+): Promise<void> {
+  return fireWebhook("N8N_SEND_QUESTIONNAIRE_WEBHOOK_URL", payload, auditId);
+}
+
+export async function fireEmailFollowupWebhook(
+  payload: EmailFollowupPayload,
+  auditId: string
+): Promise<void> {
+  return fireWebhook("N8N_EMAIL_FOLLOWUP_WEBHOOK_URL", payload, auditId);
+}
+
+export async function fireDeletionConfirmationWebhook(
+  payload: DeletionConfirmationPayload,
+  auditId: string | null
+): Promise<void> {
+  return fireWebhook("N8N_DELETION_CONFIRMATION_WEBHOOK_URL", payload, auditId);
 }
 
 export async function fireRegeneratePdfWebhook(

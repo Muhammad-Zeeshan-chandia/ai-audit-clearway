@@ -50,6 +50,7 @@ interface ActivityRow {
 interface Props {
   client: Record<string, unknown>;
   audits: AuditRow[];
+  totalAuditCount: number;
   activity: ActivityRow[];
   clientFields: FieldDefinition[];
   fmt: (v: number) => string;
@@ -130,7 +131,7 @@ function FieldInput({
   );
 }
 
-export function ClientEditor({ client: initialClient, audits, activity, clientFields, fmt }: Props) {
+export function ClientEditor({ client: initialClient, audits, totalAuditCount, activity, clientFields, fmt }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState("info");
   const [data, setData] = useState<Record<string, unknown>>(initialClient);
@@ -258,6 +259,12 @@ export function ClientEditor({ client: initialClient, audits, activity, clientFi
               </Button>
             </div>
           ) : (
+            <div className="space-y-2">
+              {totalAuditCount > 3 && (
+                <p className="text-xs text-[--text-tertiary]">
+                  Showing the latest 3 of {totalAuditCount} audits for this client.
+                </p>
+              )}
             <div className="overflow-hidden rounded-md border border-[--border]">
               <table className="w-full text-sm">
                 <thead>
@@ -293,6 +300,7 @@ export function ClientEditor({ client: initialClient, audits, activity, clientFi
                   ))}
                 </tbody>
               </table>
+            </div>
             </div>
           )}
         </div>

@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, Download, Columns3, ChevronLeft, ChevronRight } from "lucide-react";
+import { AlertTriangle, Download, Columns3, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { AuditStatusBadge, TierBadge } from "@/components/ui/badge";
 import { SCORE_TO_RAG } from "@/lib/constants/categories";
 import type { AuditStatus, FinalTier } from "@/lib/types";
@@ -34,9 +35,8 @@ interface AuditWideRow {
   sector: string | null;
   call_date: string | null;
   consent_captured: boolean;
-  staff_count: string | null;
-  sites_count: string | null;
-  main_challenge: string | null;
+  customer_facing_staff: string | null;
+  fix_one_thing: string | null;
   c1_score: number | null; c1_gbp: number | null;
   c2_score: number | null; c2_gbp: number | null;
   c3_score: number | null; c3_gbp: number | null;
@@ -64,7 +64,7 @@ interface Props {
 
 const ALL_COLUMNS = [
   "business", "owner", "email", "phone", "sector", "call_date", "consent",
-  "status", "created", "q_submitted", "staff", "sites", "biggest_pain",
+  "status", "created", "q_submitted", "staff", "biggest_pain",
   "c1_score", "c1_gbp", "c2_score", "c2_gbp",
   "c3_score", "c3_gbp", "c4_score", "c4_gbp",
   "c5_score", "c5_gbp", "c6_score", "c6_gbp",
@@ -83,7 +83,7 @@ const COL_LABELS: Record<ColKey, string> = {
   business: "Business", owner: "Owner", email: "Email", phone: "Phone",
   sector: "Sector", call_date: "Call Date", consent: "Consent",
   status: "Status", created: "Created", q_submitted: "Q.Submitted",
-  staff: "Staff", sites: "Sites", biggest_pain: "Biggest Pain",
+  staff: "Staff", biggest_pain: "Biggest Pain",
   c1_score: "C1 Score", c1_gbp: "C1 £",
   c2_score: "C2 Score", c2_gbp: "C2 £",
   c3_score: "C3 Score", c3_gbp: "C3 £",
@@ -137,6 +137,16 @@ export function WideAuditsTable({
   const [showColPicker, setShowColPicker] = useState(false);
   const [visibleCols, setVisibleCols] = useState<ColKey[]>(DEFAULT_VISIBLE);
 
+  // Selection & delete state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteOpen, setDeleteOpen]   = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string[]>([]);
+  const [deleting, setDeleting]       = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Indeterminate checkbox ref
+  const selectAllRef = useRef<HTMLInputElement>(null);
+
   // Load column visibility from localStorage
   useEffect(() => {
     try {
@@ -144,6 +154,17 @@ export function WideAuditsTable({
       if (saved) setVisibleCols(JSON.parse(saved) as ColKey[]);
     } catch {}
   }, []);
+
+  // Clear selection when audits change (page navigation / filter)
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [audits]);
+
+  // Sync indeterminate state
+  useEffect(() => {
+    if (!selectAllRef.current) return;
+    selectAllRef.current.indeterminate = selectedIds.size > 0 && selectedIds.size < audits.length;
+  }, [selectedIds, audits.length]);
 
   function toggleCol(col: ColKey) {
     setVisibleCols((prev) => {
@@ -174,8 +195,62 @@ export function WideAuditsTable({
     [pathname, router, page, search, status, tier, sector, flagged]
   );
 
+  function toggleOne(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (selectedIds.size === audits.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(audits.map((a) => a.audit_id)));
+    }
+  }
+
+  function startDelete(ids: string[]) {
+    setDeleteTarget(ids);
+    setDeleteError(null);
+    setDeleteOpen(true);
+  }
+
+  async function confirmDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      if (deleteTarget.length === 1) {
+        const res = await fetch(`/api/audits/${deleteTarget[0]}`, { method: "DELETE" });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({})) as Record<string, string>;
+          throw new Error(j.error ?? "Delete failed");
+        }
+      } else {
+        const res = await fetch("/api/audits/bulk-delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: deleteTarget }),
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({})) as Record<string, string>;
+          throw new Error(j.error ?? "Delete failed");
+        }
+      }
+      setDeleteOpen(false);
+      setSelectedIds(new Set());
+      router.refresh();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const totalPages = Math.ceil(total / pageSize);
   const vis = new Set(visibleCols);
+  const allSelected = audits.length > 0 && selectedIds.size === audits.length;
 
   function th(label: string) {
     return (
@@ -216,6 +291,14 @@ export function WideAuditsTable({
           <option value="true">Flagged only</option>
           <option value="false">Not flagged</option>
         </Select>
+
+        {/* Bulk delete button */}
+        {selectedIds.size > 0 && (
+          <Button variant="danger" size="sm" onClick={() => startDelete(Array.from(selectedIds))}>
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete {selectedIds.size} selected
+          </Button>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           {/* Column visibility */}
@@ -258,6 +341,17 @@ export function WideAuditsTable({
         <table className="w-max min-w-full text-sm">
           <thead className="border-b border-[--border] bg-[--bg-secondary]">
             <tr>
+              {/* Select-all checkbox */}
+              <th className="w-10 px-3 py-2">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  className="h-3.5 w-3.5 cursor-pointer accent-[--accent]"
+                  aria-label="Select all"
+                />
+              </th>
               {vis.has("business")     && th("Business")}
               {vis.has("owner")        && th("Owner")}
               {vis.has("email")        && th("Email")}
@@ -269,7 +363,6 @@ export function WideAuditsTable({
               {vis.has("created")      && th("Created")}
               {vis.has("q_submitted")  && th("Q.Submitted")}
               {vis.has("staff")        && th("Staff")}
-              {vis.has("sites")        && th("Sites")}
               {vis.has("biggest_pain") && th("Biggest Pain")}
               {vis.has("c1_score") && th("C1 Score")}
               {vis.has("c1_gbp")   && th("C1 £")}
@@ -291,12 +384,14 @@ export function WideAuditsTable({
               {vis.has("review_notes") && th("Notes")}
               {vis.has("sent")         && th("Sent")}
               {vis.has("flagged")      && th("Flag")}
+              {/* Delete column */}
+              <th className="w-10 px-3 py-2" />
             </tr>
           </thead>
           <tbody>
             {audits.length === 0 ? (
               <tr>
-                <td colSpan={visibleCols.length + 1} className="px-4 py-8 text-center text-sm text-[--text-tertiary]">
+                <td colSpan={visibleCols.length + 3} className="px-4 py-8 text-center text-sm text-[--text-tertiary]">
                   No audits match your filters.
                 </td>
               </tr>
@@ -306,6 +401,20 @@ export function WideAuditsTable({
                   key={a.audit_id}
                   className="border-b border-[--border] last:border-0 hover:bg-[--bg-secondary] transition-colors"
                 >
+                  {/* Checkbox */}
+                  <td
+                    className="w-10 px-3 py-2.5"
+                    onClick={(e) => { e.stopPropagation(); toggleOne(a.audit_id); }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(a.audit_id)}
+                      onChange={() => toggleOne(a.audit_id)}
+                      className="h-3.5 w-3.5 cursor-pointer accent-[--accent]"
+                      aria-label={`Select ${a.business_name}`}
+                    />
+                  </td>
+
                   {vis.has("business") && td(
                     <Link href={`/audits/${a.audit_id}`} className="font-medium text-[--text-primary] hover:text-[--accent] whitespace-nowrap flex items-center gap-1">
                       {a.business_name}
@@ -321,11 +430,10 @@ export function WideAuditsTable({
                   {vis.has("status")       && td(<AuditStatusBadge status={a.status} />)}
                   {vis.has("created")      && td(<span className="whitespace-nowrap text-[--text-secondary]">{fmtDate(a.created_at)}</span>)}
                   {vis.has("q_submitted")  && td(<span className="whitespace-nowrap text-[--text-secondary]">{fmtDate(a.questionnaire_submitted_at)}</span>)}
-                  {vis.has("staff")        && td(<span className="text-[--text-secondary]">{a.staff_count ?? "—"}</span>)}
-                  {vis.has("sites")        && td(<span className="text-[--text-secondary]">{a.sites_count ?? "—"}</span>)}
+                  {vis.has("staff")        && td(<span className="text-[--text-secondary]">{a.customer_facing_staff ?? "—"}</span>)}
                   {vis.has("biggest_pain") && td(
-                    <span className="max-w-[160px] block truncate text-[--text-secondary]" title={a.main_challenge ?? ""}>
-                      {a.main_challenge ?? "—"}
+                    <span className="max-w-[160px] block truncate text-[--text-secondary]" title={a.fix_one_thing ?? ""}>
+                      {a.fix_one_thing ?? "—"}
                     </span>
                   )}
                   {vis.has("c1_score") && td(<ScoreDot score={a.c1_score} />)}
@@ -361,6 +469,21 @@ export function WideAuditsTable({
                       ? <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                       : <span className="text-[--text-tertiary]">—</span>
                   )}
+
+                  {/* Inline delete button */}
+                  <td
+                    className="w-10 px-2 py-2.5"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={() => startDelete([a.audit_id])}
+                      className="rounded p-1 text-[--text-tertiary] opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-[--danger] transition-all [tr:hover_&]:opacity-100"
+                      title="Delete audit"
+                      aria-label="Delete audit"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </td>
                 </tr>
               ))
             )}
@@ -388,6 +511,27 @@ export function WideAuditsTable({
           </Button>
         </div>
       </div>
+
+      {/* Delete confirmation dialog */}
+      <Dialog
+        open={deleteOpen}
+        onClose={() => !deleting && setDeleteOpen(false)}
+        title="Delete audit(s)"
+        size="sm"
+        description={`Permanently delete ${deleteTarget.length} audit${deleteTarget.length !== 1 ? "s" : ""}? This cannot be undone.`}
+      >
+        {deleteError && (
+          <p className="mb-3 rounded-md border border-[--danger] bg-red-50 px-3 py-2 text-sm text-[--danger]">
+            {deleteError}
+          </p>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={() => setDeleteOpen(false)} disabled={deleting}>Cancel</Button>
+          <Button variant="danger" size="sm" loading={deleting} onClick={confirmDelete}>
+            Delete
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </div>
   );
 }

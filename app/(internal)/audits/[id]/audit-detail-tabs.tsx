@@ -152,9 +152,15 @@ export function AuditDetailTabs({
       setRequestingChanges(false);
       return;
     }
+    const json = await res.json().catch(() => ({}));
     setChangesOpen(false);
     setReviewNotes("");
-    router.refresh();
+    setRequestingChanges(false);
+    if ((json as Record<string, unknown>).new_audit_id) {
+      router.push(`/audits/${(json as Record<string, string>).new_audit_id}`);
+    } else {
+      router.refresh();
+    }
   }
 
   function startEdit() {

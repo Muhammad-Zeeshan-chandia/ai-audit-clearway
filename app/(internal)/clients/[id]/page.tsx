@@ -19,20 +19,19 @@ export default async function ClientDetailPage({ params }: { params: { id: strin
 
   const { data: client, error } = await supabase
     .from("clients")
-    .select(`
-      *,
-      audits(
-        id, status, final_tier, total_opportunity_gbp,
-        flagged_for_review, created_at, audit_run_at, sent_at
-      )
-    `)
+    .select("*")
     .eq("id", params.id)
     .is("deleted_at", null)
     .single();
 
   if (error || !client) notFound();
 
-  const [{ data: clientFields }, { data: activity }] = await Promise.all([
+  const [
+    { data: clientFields },
+    { data: activity },
+    { data: auditsRaw },
+    { count: totalAuditCount },
+  ] = await Promise.all([
     service
       .from("field_definitions")
       .select("*")
@@ -46,9 +45,23 @@ export default async function ClientDetailPage({ params }: { params: { id: strin
       .eq("entity_id", params.id)
       .order("created_at", { ascending: false })
       .limit(50),
+
+    service
+      .from("audits")
+      .select("id, status, final_tier, total_opportunity_gbp, flagged_for_review, created_at, audit_run_at, sent_at")
+      .eq("client_id", params.id)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(3),
+
+    service
+      .from("audits")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", params.id)
+      .is("deleted_at", null),
   ]);
 
-  const audits = (client.audits ?? []) as Array<{
+  const audits = (auditsRaw ?? []) as Array<{
     id: string;
     status: AuditStatus;
     final_tier: FinalTier | null;
@@ -72,6 +85,7 @@ export default async function ClientDetailPage({ params }: { params: { id: strin
       <ClientEditor
         client={client as Record<string, unknown>}
         audits={audits}
+        totalAuditCount={totalAuditCount ?? 0}
         activity={(activity ?? []) as Array<{ id: string; action: string; created_at: string; metadata: Record<string, unknown> | null }>}
         clientFields={(clientFields ?? []) as FieldDefinition[]}
         fmt={fmt}

@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { fireDeletionConfirmationWebhook } from "@/lib/n8n";
 
 function verifyCronSecret(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -81,7 +82,7 @@ export async function GET(request: NextRequest) {
   // - sent within the last 30 days
   const { data: eligibleClients, error: clientErr } = await service
     .from("clients")
-    .select("id, email")
+    .select("id, email, owner_name")
     .is("deleted_at", null)
     .not("email", "like", "gdpr-deleted-%"); // skip already anonymised
 
@@ -113,6 +114,16 @@ export async function GET(request: NextRequest) {
 
     // Anonymise: replace email with non-identifiable placeholder
     const placeholder = `gdpr-deleted-${client.id}@anonymised.internal`;
+
+    fireDeletionConfirmationWebhook(
+      {
+        client_email: client.email,
+        client_name: "owner_name" in client ? (client as Record<string, unknown>).owner_name as string | null : null,
+        grace_ends_at: now,
+      },
+      null
+    ).catch((err) => console.error("[auto-delete] deletion confirmation webhook error:", err));
+
     await service
       .from("clients")
       .update({

@@ -11,7 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { sendDeletionConfirmationEmail } from "@/lib/email";
+import { fireDeletionConfirmationWebhook } from "@/lib/n8n";
 
 export async function POST(request: NextRequest) {
   const supabase = createClient();
@@ -104,14 +104,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: insertErr.message }, { status: 500 });
   }
 
-  // Send confirmation email
-  if (process.env.RESEND_API_KEY) {
-    sendDeletionConfirmationEmail({
-      to: clientEmail,
-      name: clientName,
-      graceEndsAt,
-    }).catch(() => {});
-  }
+  // Fire deletion confirmation webhook (n8n delivers the email)
+  fireDeletionConfirmationWebhook(
+    { client_email: clientEmail, client_name: clientName, grace_ends_at: graceEndsAt },
+    null
+  ).catch(() => {});
 
   // Audit log
   await service.from("audit_log").insert({

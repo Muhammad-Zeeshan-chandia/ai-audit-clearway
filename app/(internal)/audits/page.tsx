@@ -3,6 +3,8 @@ import { WideAuditsTable } from "./wide-audits-table";
 import { CATEGORIES } from "@/lib/constants/categories";
 import type { AuditStatus, FinalTier } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 const SECTORS = [
   { value: "restaurant",         label: "Restaurant" },
   { value: "clinic_dental",      label: "Dental / Clinic" },
@@ -18,7 +20,9 @@ const SECTORS = [
 const STATUSES: Array<{ value: AuditStatus; label: string }> = [
   { value: "awaiting_questionnaire", label: "Awaiting questionnaire" },
   { value: "audit_running",          label: "Audit running" },
-  { value: "awaiting_review",        label: "Awaiting review" },
+  { value: "awaiting_review",          label: "Awaiting review" },
+  { value: "awaiting_client_followup", label: "Awaiting client follow-up" },
+  { value: "followup_received",        label: "Follow-up received" },
   { value: "approved",               label: "Approved" },
   { value: "sent",                   label: "Sent" },
   { value: "failed",                 label: "Failed" },
@@ -113,9 +117,8 @@ export default async function AuditsPage({ searchParams }: { searchParams: Searc
       sector:                      r.sector as string | null,
       call_date:                   r.call_date as string | null,
       consent_captured:            Boolean(r.consent_captured),
-      staff_count:                 q["staff_count"] != null ? String(q["staff_count"]) : null,
-      sites_count:                 q["sites_count"] != null ? String(q["sites_count"]) : null,
-      main_challenge:              q["main_challenge"] != null ? String(q["main_challenge"]) : null,
+      customer_facing_staff:       q["customer_facing_staff"] != null ? String(q["customer_facing_staff"]) : null,
+      fix_one_thing:               q["fix_one_thing"]         != null ? String(q["fix_one_thing"])         : null,
       c1_score: r.c1_score != null ? Number(r.c1_score) : null,
       c1_gbp:   r.c1_gbp  != null ? Number(r.c1_gbp)  : null,
       c2_score: r.c2_score != null ? Number(r.c2_score) : null,

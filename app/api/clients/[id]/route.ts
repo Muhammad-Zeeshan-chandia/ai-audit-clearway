@@ -34,6 +34,38 @@ export async function GET(
   return NextResponse.json({ client, activity: activity ?? [] });
 }
 
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const supabase = createClient();
+  const { data: { user }, error: authErr } = await supabase.auth.getUser();
+  if (authErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const service = createServiceClient();
+  const now = new Date().toISOString();
+
+  await service.from("audits").update({ deleted_at: now }).eq("client_id", params.id).is("deleted_at", null);
+
+  const { error } = await service
+    .from("clients")
+    .update({ deleted_at: now })
+    .eq("id", params.id)
+    .is("deleted_at", null);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  await service.from("audit_log").insert({
+    actor_id: user.id,
+    action: "client.deleted",
+    entity_type: "client",
+    entity_id: params.id,
+    metadata: {},
+  });
+
+  return NextResponse.json({ ok: true });
+}
+
 // PATCH /api/clients/[id]
 // Updates editable client fields. Accepts any subset of the client columns.
 export async function PATCH(

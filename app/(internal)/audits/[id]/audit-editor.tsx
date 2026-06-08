@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { AuditStatusBadge, Badge } from "@/components/ui/badge";
 import { CATEGORIES, SCORE_TO_RAG, RAG_COLORS, TIERS } from "@/lib/constants/categories";
-import type { AuditStatus, RAG, FieldDefinition } from "@/lib/types";
+import type { AuditStatus, RAG, FieldDefinition, DiscoveryCall } from "@/lib/types";
 
 interface AuditProp {
   id: string;
@@ -35,7 +35,26 @@ interface AuditProp {
   transcript_path: string | null;
   pdf_path: string | null;
   client_id: string;
+  is_current: boolean;
+  rebuild_count: number;
 }
+
+type AuditVersion = {
+  id: string;
+  status: string;
+  is_current: boolean;
+  rebuild_count: number;
+  created_at: string;
+};
+
+type ClientFollowupRow = {
+  id: string;
+  response_text: string;
+  source: "email_form" | "manual";
+  submitted_at: string;
+  submitted_by_user_id: string | null;
+  users: { email: string } | null;
+};
 
 interface CategoryProp {
   id: string;
@@ -52,6 +71,7 @@ interface CategoryProp {
   insufficient_data: boolean;
   used_defaults: boolean;
   contradiction_flag: boolean;
+  missing_questions: string[] | null;
 }
 
 interface Props {
@@ -64,6 +84,9 @@ interface Props {
   pdfUrl: string | null;
   clientFields: FieldDefinition[];
   questionnaireFields: FieldDefinition[];
+  discoveryCall: DiscoveryCall | null;
+  clientFollowups: ClientFollowupRow[];
+  siblingAudits: AuditVersion[];
   fmt: (v: number) => string;
 }
 
@@ -91,6 +114,23 @@ function SaveButton({ loading, onClick, label = "Save" }: { loading: boolean; on
     </Button>
   );
 }
+
+function DCField({ label, children }: { label: string; children: React.ReactNode }) {
+  if (children == null || children === "") return null;
+  return (
+    <div>
+      <p className="text-xs font-medium text-[--text-tertiary]">{label}</p>
+      <p className="mt-0.5 text-sm text-[--text-primary]">{children}</p>
+    </div>
+  );
+}
+
+const TURNOVER_LABELS: Record<string, string> = {
+  "100k": "£100k",
+  "500k": "£500k",
+  "1m":   "£1m",
+  "5m_plus": "£5m+",
+};
 
 // Inline field renderer for client/questionnaire based on FieldDefinition type
 function FieldInput({
@@ -184,6 +224,9 @@ export function AuditEditor({
   pdfUrl,
   clientFields,
   questionnaireFields,
+  discoveryCall,
+  clientFollowups,
+  siblingAudits,
   fmt,
 }: Props) {
   const router = useRouter();
@@ -227,7 +270,11 @@ export function AuditEditor({
   const [changingReq, setChangingReq]   = useState(false);
   const [rerunning, setRerunning]       = useState(false);
   const [regen, setRegen]               = useState(false);
-  const [actionError, setActionError]   = useState<string | null>(null);
+  const [actionError, setActionError]             = useState<string | null>(null);
+  const [actionMessage, setActionMessage]           = useState<string | null>(null);
+  const [sendingQuestionnaire, setSendingQuestionnaire] = useState(false);
+  const [followupModalOpen, setFollowupModalOpen]   = useState(false);
+  const [sendingFollowup, setSendingFollowup]       = useState(false);
 
   // ── Tier override ──
   async function handleTierChange(newTier: string) {
@@ -361,9 +408,14 @@ export function AuditEditor({
       setActionError(j.error ?? "Request failed.");
       return;
     }
+    const json = await res.json().catch(() => ({}));
     setChangesOpen(false);
     setChangesNotes("");
-    router.refresh();
+    if ((json as Record<string, unknown>).new_audit_id) {
+      router.push(`/audits/${(json as Record<string, string>).new_audit_id}`);
+    } else {
+      router.refresh();
+    }
   }
 
   // ── Rerun Audit ──
@@ -381,7 +433,55 @@ export function AuditEditor({
       setActionError(j.error ?? "Rerun failed.");
       return;
     }
-    router.refresh();
+    const json = await res.json().catch(() => ({}));
+    if ((json as Record<string, unknown>).new_audit_id) {
+      router.push(`/audits/${(json as Record<string, string>).new_audit_id}`);
+    } else {
+      router.refresh();
+    }
+  }
+
+  // ── Send Questionnaire ──
+  async function handleSendQuestionnaire() {
+    setSendingQuestionnaire(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/audits/${audit.id}/send-questionnaire`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setActionError((json as { error?: string }).error ?? "Failed to send questionnaire");
+        return;
+      }
+      setActionMessage("Questionnaire link sent to client.");
+      router.refresh();
+    } catch {
+      setActionError("Network error sending questionnaire.");
+    } finally {
+      setSendingQuestionnaire(false);
+    }
+  }
+
+  // ── Email Follow-up ──
+  async function handleSendFollowup() {
+    setSendingFollowup(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/audits/${audit.id}/email-followup`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setActionError((json as { error?: string }).error ?? "Failed to send follow-up");
+        return;
+      }
+      setActionMessage("Follow-up email sent. Audit status is now Awaiting follow-up.");
+      setFollowupModalOpen(false);
+      router.refresh();
+    } catch {
+      setActionError("Network error sending follow-up.");
+    } finally {
+      setSendingFollowup(false);
+    }
   }
 
   // ── Regenerate PDF ──
@@ -405,6 +505,15 @@ export function AuditEditor({
       setActionError(j.error ?? "Regenerate failed.");
     }
   }
+
+  const catValues = Object.values(catData);
+  const flaggedCategories = catValues.filter(
+    (c) =>
+      c.insufficient_data &&
+      Array.isArray(c.missing_questions) &&
+      (c.missing_questions?.length ?? 0) > 0
+  );
+  const hasFlaggedCategories = flaggedCategories.length > 0;
 
   return (
     <div className="space-y-10">
@@ -451,6 +560,27 @@ export function AuditEditor({
                 Flagged
               </Badge>
             )}
+
+            {siblingAudits.length > 1 && (
+              <div className="flex items-center gap-1.5 text-xs">
+                <label htmlFor="audit-version" className="text-[--text-tertiary]">Version</label>
+                <select
+                  id="audit-version"
+                  value={audit.id}
+                  onChange={(e) => router.push(`/audits/${e.target.value}`)}
+                  className="rounded-md border border-[--border] bg-[--bg-secondary] px-2 py-1 text-xs text-[--text-primary] focus:outline-none focus:ring-1 focus:ring-[--accent]"
+                >
+                  {siblingAudits.map((v, idx) => (
+                    <option key={v.id} value={v.id}>
+                      v{siblingAudits.length - idx}
+                      {v.is_current ? " (current)" : ""}
+                      {" · "}
+                      {new Date(v.created_at).toLocaleDateString("en-GB")}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-4 text-sm text-[--text-secondary]">
             {audit.total_opportunity_gbp != null && (
@@ -479,22 +609,50 @@ export function AuditEditor({
           {actionError && (
             <span className="text-xs text-[--danger]">{actionError}</span>
           )}
-          {(audit.status === "awaiting_review" || audit.status === "approved") && (
+          {actionMessage && (
+            <span className="text-xs text-emerald-600">{actionMessage}</span>
+          )}
+
+          {audit.status === "awaiting_questionnaire" && (
+            <Button variant="secondary" size="sm" loading={sendingQuestionnaire} onClick={handleSendQuestionnaire}>
+              <Send className="h-4 w-4" />
+              Send questionnaire
+            </Button>
+          )}
+          {audit.status === "audit_running" && (
+            <span className="text-xs text-[--text-tertiary]">Audit is running…</span>
+          )}
+          {audit.status === "awaiting_client_followup" && (
+            <span className="text-xs text-[--text-tertiary]">Waiting for client follow-up…</span>
+          )}
+
+          {(audit.status === "awaiting_review" || audit.status === "followup_received" || audit.status === "approved") && (
             <Button variant="primary" size="sm" onClick={() => setApproveOpen(true)}>
               <Send className="h-4 w-4" />
               Approve &amp; Send
             </Button>
           )}
-          {audit.status === "awaiting_review" && (
+          {(audit.status === "awaiting_review" || audit.status === "followup_received") && (
             <Button variant="secondary" size="sm" onClick={() => setChangesOpen(true)}>
               <RefreshCw className="h-4 w-4" />
               Request Changes
             </Button>
           )}
-          <Button variant="ghost" size="sm" loading={rerunning} onClick={handleRerun}>
-            <RefreshCw className="h-4 w-4" />
-            Rerun Audit
-          </Button>
+          {(audit.status === "awaiting_review" || audit.status === "followup_received") && hasFlaggedCategories && (
+            <Button variant="ghost" size="sm" onClick={() => setFollowupModalOpen(true)}>
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              Email follow-up
+              <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">
+                {flaggedCategories.reduce((acc, c) => acc + (c.missing_questions?.length ?? 0), 0)}
+              </span>
+            </Button>
+          )}
+          {(audit.status === "awaiting_review" || audit.status === "followup_received") && (
+            <Button variant="ghost" size="sm" loading={rerunning} onClick={handleRerun}>
+              <RefreshCw className="h-4 w-4" />
+              Rerun Audit
+            </Button>
+          )}
           {Object.keys(catData).length > 0 && (
             <Button variant="ghost" size="sm" loading={regen} onClick={handleRegeneratePdf}>
               <FileText className="h-4 w-4" />
@@ -577,7 +735,72 @@ export function AuditEditor({
         </div>
       </div>
 
-      {/* ── Section 5: Executive summary ── */}
+      {/* ── Section 5: Discovery call ── */}
+      <div>
+        <SectionTitle>Discovery call</SectionTitle>
+        {!discoveryCall ? (
+          <p className="rounded-md border border-[--border] bg-[--bg-secondary] px-4 py-3 text-sm text-[--text-secondary]">
+            No discovery call data captured for this audit. Internal form may not have been submitted.
+          </p>
+        ) : (
+          <>
+            {discoveryCall.recording_consent_captured === false && (
+              <div className="mb-4 rounded-md border border-red-300 bg-red-50 px-4 py-3 dark:border-red-700/40 dark:bg-red-900/20">
+                <p className="text-sm font-medium text-red-700 dark:text-red-300">
+                  ⚠️ No recording consent captured — audit engine will refuse to process the transcript.
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <DCField label="Call date">
+                {discoveryCall.call_date
+                  ? new Date(discoveryCall.call_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+                  : null}
+              </DCField>
+              <DCField label="Call number">{discoveryCall.call_number}</DCField>
+              <DCField label="Recording consent">
+                {discoveryCall.recording_consent_captured ? (
+                  <span className="text-emerald-600">Yes</span>
+                ) : (
+                  <span className="text-red-600">No</span>
+                )}
+              </DCField>
+              <DCField label="How they found Clearway">{discoveryCall.lead_source}</DCField>
+              <DCField label="Years in business">{discoveryCall.years_in_business}</DCField>
+              <DCField label="Turnover band">
+                {discoveryCall.turnover_band
+                  ? (TURNOVER_LABELS[discoveryCall.turnover_band] ?? discoveryCall.turnover_band)
+                  : null}
+              </DCField>
+              <DCField label="Total staff">{discoveryCall.total_staff}</DCField>
+              <DCField label="Sites">{discoveryCall.sites}</DCField>
+              <DCField label="Rough enquiries/month">{discoveryCall.rough_enquiries_per_month}</DCField>
+              <DCField label="Rough missed calls/month">{discoveryCall.rough_missed_calls_per_month}</DCField>
+              <DCField label="Rough conversion %">
+                {discoveryCall.rough_conversion_percent != null
+                  ? `${discoveryCall.rough_conversion_percent}%`
+                  : null}
+              </DCField>
+              <DCField label="Avg customer value">
+                {discoveryCall.average_customer_value != null
+                  ? `£${discoveryCall.average_customer_value}`
+                  : null}
+              </DCField>
+              <DCField label="Rough admin hrs/week">{discoveryCall.rough_admin_hours_per_week}</DCField>
+              {discoveryCall.anything_else_worth_knowing && (
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <p className="text-xs font-medium text-[--text-tertiary]">Notes</p>
+                  <pre className="mt-0.5 whitespace-pre-wrap font-sans text-sm text-[--text-primary]">
+                    {discoveryCall.anything_else_worth_knowing}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Section 6: Executive summary ── */}
       <div>
         <SectionTitle>Executive summary</SectionTitle>
         <Textarea
@@ -592,7 +815,7 @@ export function AuditEditor({
         </div>
       </div>
 
-      {/* ── Section 6: Category cards ── */}
+      {/* ── Section 7: Category cards ── */}
       <div>
         <SectionTitle>Category results</SectionTitle>
         <div className="space-y-4">
@@ -614,6 +837,20 @@ export function AuditEditor({
                     </p>
                     <h3 className="text-sm font-semibold text-[--text-primary]">{canonCat.name}</h3>
                     <p className="text-xs text-[--text-tertiary]">{canonCat.description}</p>
+                    {cat?.insufficient_data &&
+                      Array.isArray(cat.missing_questions) &&
+                      (cat.missing_questions?.length ?? 0) > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setFollowupModalOpen(true)}
+                          className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-200"
+                          title="Click to review questions and email client"
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                          {cat.missing_questions.length} question
+                          {cat.missing_questions.length === 1 ? "" : "s"} needed
+                        </button>
+                      )}
                   </div>
                   {rag && (
                     <span className={`rounded-full px-3 py-1 text-xs font-semibold ${ragColors?.bg} ${ragColors?.text}`}>
@@ -729,7 +966,7 @@ export function AuditEditor({
         </div>
       </div>
 
-      {/* ── Section 7: Review notes ── */}
+      {/* ── Section 8: Review notes ── */}
       <div>
         <SectionTitle>Review notes</SectionTitle>
         <Textarea
@@ -744,7 +981,39 @@ export function AuditEditor({
         </div>
       </div>
 
-      {/* ── Section 8: Files ── */}
+      {/* ── Section 9: Follow-ups ── */}
+      <div>
+        <SectionTitle>
+          Follow-ups{clientFollowups.length > 1 ? ` (${clientFollowups.length})` : ""}
+        </SectionTitle>
+        {clientFollowups.length === 0 ? (
+          <p className="text-sm text-[--text-tertiary]">No follow-ups received for this audit yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {clientFollowups.map((f) => {
+              const dt = new Date(f.submitted_at);
+              const dateStr = dt.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+              const timeStr = dt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+              return (
+                <div key={f.id} className="rounded-md border border-[--border] bg-[--bg-primary] p-4">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-[--text-tertiary]">{dateStr} · {timeStr}</span>
+                    <span className="rounded-full border border-[--border] bg-[--bg-secondary] px-2 py-0.5 text-xs text-[--text-secondary]">
+                      {f.source === "email_form" ? "Client form" : "Manual entry"}
+                    </span>
+                    {f.submitted_by_user_id && f.users?.email && (
+                      <span className="text-xs text-[--text-tertiary]">by {f.users.email}</span>
+                    )}
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm text-[--text-primary]">{f.response_text}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Section 10: Files ── */}
       <div>
         <SectionTitle>Files</SectionTitle>
         <div className="flex flex-wrap gap-4">
@@ -779,7 +1048,7 @@ export function AuditEditor({
         </div>
       </div>
 
-      {/* ── Section 9: Webhook activity ── */}
+      {/* ── Section 11: Webhook activity ── */}
       {webhookLogs.length > 0 && (
         <div>
           <SectionTitle>Recent webhook activity</SectionTitle>
@@ -844,6 +1113,44 @@ export function AuditEditor({
           <Button variant="ghost" size="sm" onClick={() => setChangesOpen(false)} disabled={changingReq}>Cancel</Button>
           <Button variant="primary" size="sm" loading={changingReq} onClick={handleRequestChanges} disabled={!changesNotes.trim()}>
             Submit &amp; re-run
+          </Button>
+        </DialogFooter>
+      </Dialog>
+
+      {/* Email follow-up modal */}
+      <Dialog
+        open={followupModalOpen}
+        onClose={() => { if (!sendingFollowup) setFollowupModalOpen(false); }}
+        title="Email follow-up to client"
+        description="The client will receive a magic link listing these questions. Status will move to Awaiting follow-up until they respond."
+        size="lg"
+      >
+        <div className="max-h-64 overflow-y-auto space-y-5">
+          {flaggedCategories.map((c) => {
+            const canonical = CATEGORIES.find((x) => x.number === c.category_number);
+            return (
+              <section key={c.category_number}>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[--text-tertiary]">
+                  {canonical?.name ?? `Category ${c.category_number}`}
+                </h3>
+                <ol className="mt-2 space-y-1.5 text-sm text-[--text-primary]">
+                  {(c.missing_questions ?? []).map((q, idx) => (
+                    <li key={idx} className="flex gap-2">
+                      <span className="text-[--text-tertiary]">{idx + 1}.</span>
+                      <span>{q}</span>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            );
+          })}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={() => setFollowupModalOpen(false)} disabled={sendingFollowup}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="sm" loading={sendingFollowup} onClick={handleSendFollowup}>
+            Send to client
           </Button>
         </DialogFooter>
       </Dialog>

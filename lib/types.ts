@@ -4,6 +4,8 @@ export type AuditStatus =
   | "awaiting_questionnaire"
   | "audit_running"
   | "awaiting_review"
+  | "awaiting_client_followup"
+  | "followup_received"
   | "approved"
   | "sent"
   | "failed"
@@ -66,6 +68,8 @@ export interface Audit {
   review_notes: string | null;
   sent_at: string | null;
   deleted_at: string | null;
+  is_current: boolean;
+  rebuild_count: number;
 }
 
 export interface AuditCategory {
@@ -85,11 +89,18 @@ export interface AuditCategory {
   used_defaults: boolean;
   contradiction_flag: boolean;
   created_at: string;
+  missing_questions: string[] | null;
+  model: string | null;
+  latency_ms: number | null;
+  raw_response: Record<string, unknown> | null;
+  error_text: string | null;
+  prompt_version: string | null;
 }
 
 export interface FieldDefinition {
   id: string;
-  entity: "client" | "questionnaire";
+  entity: "client" | "questionnaire" | "discovery_call";
+  category: number | null;
   field_key: string;
   label: string;
   field_type: FieldType;
@@ -107,4 +118,35 @@ export interface Questionnaire {
   audit_id: string;
   submitted_at: string;
   data: Record<string, unknown>;
+}
+
+export interface DiscoveryCall {
+  id: string;
+  audit_id: string;
+  call_date: string | null;
+  call_number: number | null;
+  recording_consent_captured: boolean;
+  years_in_business: number | null;
+  turnover_band: string | null;
+  lead_source: string | null;
+  rough_enquiries_per_month: number | null;
+  rough_missed_calls_per_month: number | null;
+  rough_conversion_percent: number | null;
+  average_customer_value: number | null;
+  rough_admin_hours_per_week: number | null;
+  total_staff: number | null;
+  sites: number | null;
+  anything_else_worth_knowing: string | null;
+  created_at: string;
+  created_by: string | null;
+}
+
+export interface ClientFollowup {
+  id: string;
+  audit_id: string;
+  response_text: string;
+  source: "email_form" | "manual";
+  submitted_at: string;
+  submitted_by_user_id: string | null;
+  created_at: string;
 }

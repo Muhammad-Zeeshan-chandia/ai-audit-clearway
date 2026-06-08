@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
 
   const headers = [
     "Business", "Owner", "Email", "Phone", "Sector", "Call Date", "Consent",
-    "Status", "Created", "Q.Submitted", "Staff Count", "Sites", "Biggest Pain",
+    "Status", "Created", "Q.Submitted", "Staff Count", "Biggest Pain",
     ...catHeaders,
     "Total £", "Size Score", "Tier", "Tier Overridden",
     "Audit Run", "PDF Path", "Reviewed By", "Review Notes", "Sent", "Flagged",
@@ -84,9 +84,8 @@ export async function GET(request: NextRequest) {
       r.status,
       fmtDate(r.created_at),
       fmtDate(r.questionnaire_submitted_at),
-      q["staff_count"],
-      q["sites_count"],
-      q["main_challenge"],
+      q["customer_facing_staff"],
+      q["fix_one_thing"],
       r.c1_score, fmtGbp(r.c1_gbp),
       r.c2_score, fmtGbp(r.c2_gbp),
       r.c3_score, fmtGbp(r.c3_gbp),

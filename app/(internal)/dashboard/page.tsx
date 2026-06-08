@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { createServiceClient } from "@/lib/supabase/server";
+
+export const dynamic = "force-dynamic";
 import { AuditStatusBadge, TierBadge } from "@/components/ui/badge";
 import { CATEGORIES, SCORE_TO_RAG } from "@/lib/constants/categories";
 import { AlertTriangle, Wifi, WifiOff, CheckCircle2 } from "lucide-react";
@@ -21,6 +23,8 @@ const STATUS_ORDER: AuditStatus[] = [
   "awaiting_questionnaire",
   "audit_running",
   "awaiting_review",
+  "awaiting_client_followup",
+  "followup_received",
   "approved",
   "sent",
   "failed",
@@ -30,6 +34,8 @@ const STATUS_LABELS: Record<string, string> = {
   awaiting_questionnaire: "Awaiting Q.",
   audit_running: "Running",
   awaiting_review: "Awaiting Review",
+  awaiting_client_followup: "Awaiting follow-up",
+  followup_received: "Follow-up received",
   approved: "Approved",
   sent: "Sent",
   failed: "Failed",
@@ -310,7 +316,7 @@ export default async function DashboardPage() {
       {/* Panel C — Pipeline by status */}
       <div>
         <SectionHeader title="Pipeline" href="/audits" />
-        <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+        <div className="grid grid-cols-4 gap-3 sm:grid-cols-8">
           {STATUS_ORDER.map((s) => (
             <Link
               key={s}

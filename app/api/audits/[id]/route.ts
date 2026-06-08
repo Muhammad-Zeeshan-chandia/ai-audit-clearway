@@ -48,6 +48,34 @@ export async function PATCH(
   return NextResponse.json({ ok: true });
 }
 
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const supabase = createClient();
+  const { data: { user }, error: authErr } = await supabase.auth.getUser();
+  if (authErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const service = createServiceClient();
+  const { error } = await service
+    .from("audits")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", params.id)
+    .is("deleted_at", null);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  await service.from("audit_log").insert({
+    actor_id: user.id,
+    action: "audit.deleted",
+    entity_type: "audit",
+    entity_id: params.id,
+    metadata: {},
+  });
+
+  return NextResponse.json({ ok: true });
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: { id: string } }

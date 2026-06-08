@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { fireRunAuditWebhook } from "@/lib/n8n";
+import { fireRunAuditWebhook, buildAuditEnginePayload } from "@/lib/n8n";
 
 export async function POST(
   request: NextRequest,
@@ -15,14 +15,14 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let body: { questionnaire_data: Record<string, unknown>; client_meta: { business_name: string; sector: string | null; owner_name: string | null } };
+  let body: { questionnaire_data: Record<string, unknown> };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { questionnaire_data, client_meta } = body;
+  const { questionnaire_data } = body;
 
   // Load audit + verify ownership
   const { data: audit, error: auditError } = await service
@@ -80,19 +80,19 @@ export async function POST(
 
   // 3. Fire n8n webhook (async — don't block the response on failure)
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const payload = await buildAuditEnginePayload(service, {
+    auditId: params.audit_id,
+    previousAuditId: params.audit_id,   // initial run — pass self
+    rebuildCount: 0,
+    reviewNotes: null,
+    callbackUrl: `${appUrl}/api/webhooks/audit-complete`,
+  });
 
-  fireRunAuditWebhook(
-    {
-      audit_id: params.audit_id,
-      client_id: audit.client_id,
-      transcript_path: audit.transcript_path as string | null,
-      website_url: clientData.website_url,
-      questionnaire: questionnaire_data,
-      client_meta,
-      callback_url: `${appUrl}/api/webhooks/audit-complete`,
-    },
-    params.audit_id
-  ).catch((err) => console.error("[n8n] webhook error:", err));
+  if (payload) {
+    fireRunAuditWebhook(payload, params.audit_id).catch((err) =>
+      console.error("[n8n] webhook error:", err)
+    );
+  }
 
   // 4. Audit log
   await service.from("audit_log").insert({

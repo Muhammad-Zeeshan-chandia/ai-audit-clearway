@@ -38,8 +38,10 @@ export function AuditStatusBadge({ status }: { status: AuditStatus }) {
   const map: Record<AuditStatus, { label: string; variant: BadgeVariant }> = {
     awaiting_questionnaire: { label: "Awaiting questionnaire", variant: "neutral" },
     audit_running:          { label: "Audit running",          variant: "accent"  },
-    awaiting_review:        { label: "Awaiting review",        variant: "warning" },
-    approved:               { label: "Approved",               variant: "success" },
+    awaiting_review:             { label: "Awaiting review",     variant: "warning" },
+    awaiting_client_followup:    { label: "Awaiting follow-up",  variant: "neutral" },
+    followup_received:           { label: "Follow-up received",  variant: "warning" },
+    approved:                    { label: "Approved",            variant: "success" },
     sent:                   { label: "Sent",                   variant: "success" },
     failed:                 { label: "Failed",                 variant: "danger"  },
     archived:               { label: "Archived",               variant: "neutral" },

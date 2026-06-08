@@ -30,6 +30,7 @@ export default async function PortalPage() {
         .from("audits")
         .select("id, status, created_at, questionnaire_submitted_at")
         .eq("client_id", clientRecord.id)
+        .eq("is_current", true)
         .is("deleted_at", null)
         .order("created_at", { ascending: false })
     : { data: [] };

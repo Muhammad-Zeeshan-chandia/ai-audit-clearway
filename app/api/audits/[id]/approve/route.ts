@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { fireSendAuditWebhook } from "@/lib/n8n";
-import { sendStaffApprovalConfirmEmail } from "@/lib/email";
 
 export async function POST(
   _request: NextRequest,
@@ -47,17 +46,7 @@ export async function POST(
     ).catch((err) => console.error("[approve] send webhook error:", err));
   }
 
-  // 3. Confirmation email to the approving staff member
-  if (client && process.env.RESEND_API_KEY) {
-    sendStaffApprovalConfirmEmail({
-      to: user.email!,
-      businessName: client.business_name,
-      auditId: params.id,
-      appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
-    }).catch(() => {});
-  }
-
-  // 4. Audit log
+  // 3. Audit log
   await service.from("audit_log").insert({
     actor_id: user.id,
     action: "audit.approved_and_sent",

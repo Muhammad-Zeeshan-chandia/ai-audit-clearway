@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { sendClientInviteEmail } from "@/lib/email";
+import { fireSendQuestionnaireWebhook, generateMagicLink } from "@/lib/n8n";
 
 // GET /api/clients?page=1&search=&sector=&from=&to=
 export async function GET(request: NextRequest) {
@@ -154,31 +154,28 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // 4. Generate magic link for client questionnaire
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-  const redirectTo = `${appUrl}/portal/questionnaire/${audit.id}`;
+  // 4. Generate magic link and fire n8n questionnaire webhook
+  const magicLink = await generateMagicLink(
+    serviceClient,
+    client.email,
+    `/portal/questionnaire/${audit.id}`
+  );
 
-  const { data: linkData, error: linkError } = await serviceClient.auth.admin.generateLink({
-    type: "magiclink",
-    email: client.email,
-    options: { redirectTo },
-  });
-
-  // 5. Send invite email (only if link generation succeeded and Resend key is set)
-  if (!linkError && linkData?.properties?.action_link && process.env.RESEND_API_KEY) {
-    try {
-      await sendClientInviteEmail({
-        to: client.email,
-        businessName: client.business_name,
-        ownerName: client.owner_name,
-        magicLink: linkData.properties.action_link,
-      });
-    } catch {
-      // Email failure is non-fatal — log and continue
-    }
+  if (magicLink) {
+    fireSendQuestionnaireWebhook(
+      {
+        audit_id: audit.id,
+        client_email: client.email,
+        client_name: client.owner_name,
+        business_name: client.business_name,
+        magic_link: magicLink,
+        is_resend: false,
+      },
+      audit.id
+    ).catch((err) => console.error("[clients] send-questionnaire webhook error:", err));
   }
 
-  // 6. Log to audit_log
+  // 5. Log to audit_log
   await serviceClient.from("audit_log").insert({
     actor_id: user.id,
     action: "client.created",
@@ -188,7 +185,7 @@ export async function POST(request: NextRequest) {
       audit_id: audit.id,
       business_name: client.business_name,
       transcript_uploaded: Boolean(transcriptPath),
-      magic_link_sent: !linkError,
+      magic_link_sent: Boolean(magicLink),
     },
   });
 

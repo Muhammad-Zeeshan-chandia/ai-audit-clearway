@@ -16,7 +16,7 @@ export default async function QuestionnairePage({
   // Load the audit + its client (to verify ownership)
   const { data: audit, error } = await supabase
     .from("audits")
-    .select("id, status, client_id, clients(id, email, business_name, owner_name, sector, website_url)")
+    .select("id, status, client_id, is_current, clients(id, email, business_name, owner_name, sector, website_url)")
     .eq("id", params.audit_id)
     .single();
 
@@ -28,6 +28,11 @@ export default async function QuestionnairePage({
   const clientData = (Array.isArray(rawClients) ? rawClients[0] : rawClients as unknown as ClientShape | null);
 
   if (!clientData || clientData.email.toLowerCase() !== user.email!.toLowerCase()) {
+    redirect("/portal");
+  }
+
+  // Guard against archived audits
+  if (!audit.is_current) {
     redirect("/portal");
   }
 

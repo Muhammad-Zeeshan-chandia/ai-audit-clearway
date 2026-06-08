@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { sendClientInviteEmail } from "@/lib/email";
+import { fireSendQuestionnaireWebhook, generateMagicLink } from "@/lib/n8n";
 
 // POST /api/clients/[id]/audits
 // Creates a new audit for an existing client and sends them a magic link.
@@ -40,22 +40,25 @@ export async function POST(
     return NextResponse.json({ error: auditErr?.message ?? "Failed to create audit" }, { status: 500 });
   }
 
-  // Send magic link to client
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-  const { data: magicLinkData, error: magicLinkError } = await service.auth.admin.generateLink({
-    type: "magiclink",
-    email: client.email,
-    options: { redirectTo: `${appUrl}/portal` },
-  });
+  // Generate magic link and fire n8n questionnaire webhook
+  const magicLink = await generateMagicLink(
+    service,
+    client.email,
+    `/portal/questionnaire/${audit.id}`
+  );
 
-  if (!magicLinkError && magicLinkData?.properties?.hashed_token && process.env.RESEND_API_KEY) {
-    const magicLink = `${appUrl}/auth/callback?token_hash=${magicLinkData.properties.hashed_token}&type=magiclink&next=/portal`;
-    sendClientInviteEmail({
-      to: client.email,
-      businessName: client.business_name,
-      ownerName: client.owner_name ?? undefined,
-      magicLink,
-    }).catch(() => {});
+  if (magicLink) {
+    fireSendQuestionnaireWebhook(
+      {
+        audit_id: audit.id,
+        client_email: client.email,
+        client_name: client.owner_name ?? null,
+        business_name: client.business_name,
+        magic_link: magicLink,
+        is_resend: false,
+      },
+      audit.id
+    ).catch((err) => console.error("[clients/audits] send-questionnaire webhook error:", err));
   }
 
   await service.from("audit_log").insert({

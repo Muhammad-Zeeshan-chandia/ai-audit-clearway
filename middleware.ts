@@ -9,7 +9,8 @@ export async function middleware(request: NextRequest) {
   if (
     pathname.startsWith("/api/") &&
     !pathname.startsWith("/api/webhooks") &&
-    !pathname.startsWith("/api/cron")
+    !pathname.startsWith("/api/cron") &&
+    !pathname.startsWith("/api/n8n")
   ) {
     const ip =
       request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
@@ -48,6 +49,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/webhooks") ||  // n8n callbacks — HMAC-protected
     pathname.startsWith("/api/cron") ||       // Vercel cron — CRON_SECRET-protected
+    pathname.startsWith("/api/n8n") ||        // n8n inbound routes — HMAC-protected
     pathname === "/favicon.ico";
 
   if (isPublic) return NextResponse.next({ request });

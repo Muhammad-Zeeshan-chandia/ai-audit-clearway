@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { verifySignature } from "@/lib/n8n";
-import { sendStaffAuditReadyEmail } from "@/lib/email";
 import { CATEGORIES, SCORE_TO_RAG } from "@/lib/constants/categories";
 
 interface CategoryPayload {
@@ -188,19 +187,6 @@ export async function POST(request: NextRequest) {
       ? rawClients[0]
       : (rawClients as unknown as { business_name: string } | null)
     )?.business_name ?? "Unknown business";
-
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-  const staffEmails = (staffUsers ?? []).map((u) => u.email);
-
-  if (staffEmails.length > 0 && process.env.RESEND_API_KEY) {
-    sendStaffAuditReadyEmail({
-      to: staffEmails,
-      businessName,
-      auditId: payload.audit_id,
-      flagged: payload.flagged_for_review,
-      appUrl,
-    }).catch(() => {});
-  }
 
   if ((staffUsers ?? []).length > 0) {
     await service.from("notifications").insert(

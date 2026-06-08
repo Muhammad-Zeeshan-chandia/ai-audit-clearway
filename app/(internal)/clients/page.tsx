@@ -2,6 +2,8 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 
+export const dynamic = "force-dynamic";
+
 import { ClientsTable } from "./clients-table";
 import type { AuditStatus } from "@/lib/types";
 import { Plus } from "lucide-react";
