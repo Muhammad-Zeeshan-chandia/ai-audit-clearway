@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { fireEmailFollowupWebhook, generateMagicLink } from "@/lib/n8n";
+import { CATEGORIES } from "@/lib/constants/categories";
 
 // POST /api/audits/[id]/email-followup
 // Staff requests additional information from the client.
-// Transitions audit to awaiting_client_followup and fires n8n to deliver the email.
+// Loads flagged categories, assembles question list, transitions audit to
+// awaiting_client_followup, and fires n8n to deliver the email.
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -12,8 +14,6 @@ export async function POST(
   const supabase = createClient();
   const { data: { user }, error: authErr } = await supabase.auth.getUser();
   if (authErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const body = await request.json().catch(() => ({})) as { review_notes?: string };
 
   const service = createServiceClient();
 
@@ -24,7 +24,7 @@ export async function POST(
     .single();
 
   if (!audit) return NextResponse.json({ error: "Audit not found" }, { status: 404 });
-  if (!["awaiting_review", "awaiting_client_followup"].includes(audit.status)) {
+  if (!["awaiting_review", "awaiting_client_followup", "followup_received"].includes(audit.status)) {
     return NextResponse.json({ error: "Audit is not in a reviewable state" }, { status: 409 });
   }
 
@@ -34,11 +34,32 @@ export async function POST(
 
   if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
 
-  const reviewNotes = body.review_notes?.trim() || null;
+  // Load categories with insufficient_data + missing_questions
+  const { data: flaggedCats } = await service
+    .from("audit_categories")
+    .select("category_number, missing_questions")
+    .eq("audit_id", params.id)
+    .eq("insufficient_data", true)
+    .order("category_number");
+
+  const questionsByCategory = (flaggedCats ?? [])
+    .filter(
+      (c) =>
+        Array.isArray(c.missing_questions) &&
+        (c.missing_questions as string[]).length > 0
+    )
+    .map((c) => {
+      const canonical = CATEGORIES.find((x) => x.number === c.category_number);
+      return {
+        category_number: c.category_number,
+        category_name: canonical?.name ?? `Category ${c.category_number}`,
+        questions: c.missing_questions as string[],
+      };
+    });
 
   await service
     .from("audits")
-    .update({ status: "awaiting_client_followup", review_notes: reviewNotes })
+    .update({ status: "awaiting_client_followup" })
     .eq("id", params.id);
 
   const magicLink = await generateMagicLink(
@@ -55,7 +76,7 @@ export async function POST(
         client_name: client.owner_name,
         business_name: client.business_name,
         magic_link: magicLink,
-        review_notes: reviewNotes,
+        questions_by_category: questionsByCategory,
       },
       params.id
     ).catch((err) => console.error("[email-followup] webhook error:", err));
@@ -66,7 +87,10 @@ export async function POST(
     action: "audit.followup_requested",
     entity_type: "audit",
     entity_id: params.id,
-    metadata: { magic_link_generated: Boolean(magicLink), has_review_notes: Boolean(reviewNotes) },
+    metadata: {
+      magic_link_generated: Boolean(magicLink),
+      question_count: questionsByCategory.reduce((acc, g) => acc + g.questions.length, 0),
+    },
   });
 
   return NextResponse.json({ ok: true });

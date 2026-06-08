@@ -8,11 +8,13 @@ function sign(body: string): string {
 }
 
 export function verifySignature(body: string, signature: string): boolean {
+  // Strip "sha256=" prefix if present (standard webhook convention)
+  const sig = signature.startsWith("sha256=") ? signature.slice(7) : signature;
   const expected = sign(body);
-  if (expected.length !== signature.length) return false;
+  if (expected.length !== sig.length) return false;
   let mismatch = 0;
   for (let i = 0; i < expected.length; i++) {
-    mismatch |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+    mismatch |= expected.charCodeAt(i) ^ sig.charCodeAt(i);
   }
   return mismatch === 0;
 }
@@ -56,7 +58,11 @@ export interface EmailFollowupPayload {
   client_name: string | null;
   business_name: string;
   magic_link: string;
-  review_notes: string | null;
+  questions_by_category: Array<{
+    category_number: number;
+    category_name: string;
+    questions: string[];
+  }>;
 }
 
 export interface DeletionConfirmationPayload {
@@ -213,7 +219,16 @@ export async function fireRunAuditWebhook(
 }
 
 export async function fireSendAuditWebhook(
-  payload: { audit_id: string; client_email: string; pdf_path: string | null },
+  payload: {
+    audit_id: string;
+    client_email: string;
+    client_name: string | null;
+    business_name: string;
+    pdf_path: string | null;
+    executive_summary: string | null;
+    final_tier: string | null;
+    total_opportunity_gbp: number | null;
+  },
   auditId: string
 ): Promise<void> {
   return fireWebhook("N8N_SEND_AUDIT_WEBHOOK_URL", payload, auditId);

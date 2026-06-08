@@ -546,7 +546,8 @@ Verifier in app: `lib/n8n.ts → verifySignature(rawBody, headerValue)`.
 | A3 | Audit versioning behaviour: `request-changes`/`rerun` archive old + insert new; richer `AuditEnginePayload`; `buildAuditEnginePayload` helper in `lib/n8n.ts`; UI redirects to `new_audit_id`; client portal filters `is_current=true`; client detail caps audits to latest 3 with `totalAuditCount` caption. |
 | A4 | Email rerouting: `lib/email.ts` deleted, `resend` package uninstalled; 3 new outbound firers (`fireSendQuestionnaireWebhook`, `fireEmailFollowupWebhook`, `fireDeletionConfirmationWebhook`); `generateMagicLink` helper; middleware allows `/api/n8n/*`; 4 new API routes: `send-questionnaire`, `email-followup`, `n8n/discovery-call`, `followups/[audit_id]/submit`. |
 | A5 | UI: client portal followup page at `/portal/followup/[audit_id]` (server component + client form); status-aware audit-editor action buttons; amber "N questions needed" badges on category cards; Email Follow-up modal listing all flagged questions. |
-| A6 | (Next phase before n8n work) Discovery-call section, follow-ups history list, version selector dropdown, archived-version banner. |
+| A6 | Discovery-call section (read-only 2-col grid + consent warning), follow-ups history list, version selector dropdown, archived-version banner on audit detail page. |
+| A7 | App-side correctness pass before n8n wiring: (1) `verifySignature` strips `sha256=` prefix; (2) `api/n8n/discovery-call` fully rewritten — upserts client by email, correct discovery_call columns; (3) `api/webhooks/audit-complete` — score range 0–100, `missing_questions` + telemetry persisted, `status:'failed'` branch handled; (4) `EmailFollowupPayload` now sends `questions_by_category`; (5) `approve` route accepts `followup_received` + sends full `SendAuditPayload`. |
 
 ### ✗ Remaining
 

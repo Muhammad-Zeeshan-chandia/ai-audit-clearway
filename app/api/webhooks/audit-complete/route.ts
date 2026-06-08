@@ -3,24 +3,37 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { verifySignature } from "@/lib/n8n";
 import { CATEGORIES, SCORE_TO_RAG } from "@/lib/constants/categories";
 
+// Inbound from n8n audit engine. Updates audit + categories on completion.
+// Also handles status='failed' from the engine.
+
 interface CategoryPayload {
   category_number: number;
-  category_name: string;
-  score: number;
-  rag: "RED" | "AMBER" | "GREEN";
-  confidence: number;
+  score: number;               // 0–100
+  rag: string;                 // 'red' | 'amber' | 'green' (app recomputes from score)
   gbp_impact_annual: number;
-  gbp_calculation: string;
-  evidence: string;
-  solution_category: string;
-  report_section: string;
   insufficient_data: boolean;
-  used_defaults: boolean;
-  contradiction_flag: boolean;
+  missing_questions?: string[];
+  evidence: string;
+  solution?: string;           // preferred name in spec
+  solution_category?: string;  // legacy alias accepted for compatibility
+  report_section: string;
+  // Telemetry fields from A1 schema
+  model?: string;
+  latency_ms?: number;
+  raw_response?: Record<string, unknown>;
+  prompt_version?: string;
+  error_text?: string;
+  // Optional legacy fields
+  category_name?: string;
+  confidence?: number;
+  gbp_calculation?: string;
+  used_defaults?: boolean;
+  contradiction_flag?: boolean;
 }
 
 interface AuditCompletePayload {
   audit_id: string;
+  status?: "awaiting_review" | "failed";
   categories: CategoryPayload[];
   total_opportunity_gbp: number;
   final_tier: string;
@@ -29,22 +42,28 @@ interface AuditCompletePayload {
   flagged_for_review: boolean;
   flag_reasons: string[];
   pdf_path: string;
+  error_text?: string;
 }
 
 function validatePayload(payload: AuditCompletePayload): string | null {
   if (!payload.audit_id) return "audit_id is required";
+
+  // Failed audits may have empty categories — that's valid
+  if (payload.status === "failed") return null;
+
   if (!Array.isArray(payload.categories) || payload.categories.length === 0) {
     return "categories array is required";
   }
 
   for (const cat of payload.categories) {
-    // score must be integer 1–5
-    if (!Number.isInteger(cat.score) || cat.score < 1 || cat.score > 5) {
-      return `category ${cat.category_number}: score must be an integer 1–5, got ${cat.score}`;
+    if (typeof cat.score !== "number" || cat.score < 0 || cat.score > 100) {
+      return `category ${cat.category_number}: score must be 0–100, got ${cat.score}`;
     }
-    // confidence must be integer 0–100
-    if (!Number.isInteger(cat.confidence) || cat.confidence < 0 || cat.confidence > 100) {
-      return `category ${cat.category_number}: confidence must be an integer 0–100, got ${cat.confidence}`;
+    if (
+      cat.confidence !== undefined &&
+      (typeof cat.confidence !== "number" || cat.confidence < 0 || cat.confidence > 100)
+    ) {
+      return `category ${cat.category_number}: confidence must be 0–100 if provided, got ${cat.confidence}`;
     }
   }
 
@@ -101,10 +120,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Audit not found" }, { status: 404 });
   }
 
-  // Build category rows — server-recomputes RAG from score (n8n's value is informational)
+  // Handle failure branch
+  if (payload.status === "failed") {
+    await service.from("audits").update({
+      status: "failed",
+      audit_run_at: new Date().toISOString(),
+    }).eq("id", payload.audit_id);
+
+    await service.from("audit_log").insert({
+      actor_id: null,
+      action: "audit.failed",
+      entity_type: "audit",
+      entity_id: payload.audit_id,
+      metadata: { error_text: payload.error_text ?? "unknown error" },
+    });
+
+    return NextResponse.json({ ok: true });
+  }
+
+  // Build and upsert category rows (includes all A1 telemetry + missing_questions)
   const categoryRows = payload.categories.map((cat) => {
     const canonicalCategory = CATEGORIES.find((c) => c.number === cat.category_number);
-    if (canonicalCategory && cat.category_name !== canonicalCategory.name) {
+    if (canonicalCategory && cat.category_name && cat.category_name !== canonicalCategory.name) {
       console.warn(
         `[audit-complete] category ${cat.category_number} name mismatch: ` +
         `n8n sent "${cat.category_name}", expected "${canonicalCategory.name}" — using canonical name`
@@ -113,18 +150,24 @@ export async function POST(request: NextRequest) {
     return {
       audit_id: payload.audit_id,
       category_number: cat.category_number,
-      category_name: canonicalCategory?.name ?? cat.category_name,
+      category_name: canonicalCategory?.name ?? cat.category_name ?? `Category ${cat.category_number}`,
       score: cat.score,
-      rag: SCORE_TO_RAG(cat.score) ?? cat.rag,
-      confidence: cat.confidence,
+      rag: SCORE_TO_RAG(cat.score) ?? cat.rag.toLowerCase(),
+      confidence: cat.confidence ?? null,
       gbp_impact_annual: cat.gbp_impact_annual,
-      gbp_calculation: cat.gbp_calculation,
+      gbp_calculation: cat.gbp_calculation ?? null,
       evidence: cat.evidence,
-      solution_category: cat.solution_category,
+      solution_category: cat.solution ?? cat.solution_category ?? null,
       report_section: cat.report_section,
       insufficient_data: cat.insufficient_data,
-      used_defaults: cat.used_defaults,
-      contradiction_flag: cat.contradiction_flag,
+      missing_questions: cat.missing_questions ?? [],
+      used_defaults: cat.used_defaults ?? false,
+      contradiction_flag: cat.contradiction_flag ?? false,
+      model: cat.model ?? null,
+      latency_ms: cat.latency_ms ?? null,
+      prompt_version: cat.prompt_version ?? null,
+      raw_response: cat.raw_response ?? null,
+      error_text: cat.error_text ?? null,
     };
   });
 
@@ -170,6 +213,7 @@ export async function POST(request: NextRequest) {
     },
   });
 
+  // Notify staff
   const { data: staffUsers } = await service
     .from("users")
     .select("id, email")
@@ -197,7 +241,7 @@ export async function POST(request: NextRequest) {
           ? `⚠️ Flagged audit ready — ${businessName}`
           : `Audit ready for review — ${businessName}`,
         body: `${businessName} audit has completed and is awaiting your review.`,
-        link: `/audits/${payload.audit_id}?tab=review`,
+        link: `/audits/${payload.audit_id}`,
       }))
     );
   }
