@@ -40,11 +40,12 @@ export function QuestionnaireForm({ token, fields, initialValues }: Props) {
           <CheckCircle className="h-6 w-6 text-[--accent]" />
         </div>
         <h2 className="text-lg font-semibold text-[--text-primary]">
-          Thank you — your audit is being prepared
+          Perfect — that’s everything we need to get started.
         </h2>
-        <p className="mt-2 text-sm text-[--text-secondary]">
-          Our AI engine is now analysing your business. You’ll receive your audit
-          report by email when it’s ready.
+        <p className="mt-3 text-sm text-[--text-secondary]">
+          From here, the work is on us. Our team takes your answers and your data and
+          digs deep to find exactly where money and time are leaking — and what it’s
+          costing you each month. You’ll have your full report within 5–7 business days.
         </p>
         <p className="mt-4 text-xs text-[--text-tertiary]">You can close this window.</p>
       </div>

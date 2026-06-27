@@ -8,7 +8,7 @@ import { CATEGORIES, SCORE_TO_RAG } from "@/lib/constants/categories";
 
 interface CategoryPayload {
   category_number: number;
-  score: number;               // 0–100
+  score: number;               // 1–5 (1 = best / least opportunity, 5 = worst / most opportunity)
   rag: string;                 // 'red' | 'amber' | 'green' (app recomputes from score)
   gbp_impact_annual: number;
   insufficient_data: boolean;
@@ -56,8 +56,8 @@ function validatePayload(payload: AuditCompletePayload): string | null {
   }
 
   for (const cat of payload.categories) {
-    if (typeof cat.score !== "number" || cat.score < 0 || cat.score > 100) {
-      return `category ${cat.category_number}: score must be 0–100, got ${cat.score}`;
+    if (!Number.isInteger(cat.score) || cat.score < 1 || cat.score > 5) {
+      return `category ${cat.category_number}: score must be an integer 1–5 (1 = best, 5 = worst), got ${cat.score}`;
     }
     if (
       cat.confidence !== undefined &&

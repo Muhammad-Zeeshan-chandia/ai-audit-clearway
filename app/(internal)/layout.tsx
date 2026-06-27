@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/shell/sidebar";
 import { NotificationBell } from "@/components/shell/notification-bell";
+import { RealtimeRefresh } from "@/components/shell/realtime-refresh";
 
 export default async function InternalLayout({
   children,
@@ -24,6 +25,7 @@ export default async function InternalLayout({
 
   return (
     <div className="flex min-h-screen bg-[--bg-secondary]">
+      <RealtimeRefresh />
       <Sidebar userName={profile.full_name ?? ""} userEmail={profile.email} />
 
       <div className="ml-60 flex flex-1 flex-col">
