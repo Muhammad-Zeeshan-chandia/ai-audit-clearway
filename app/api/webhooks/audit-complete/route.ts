@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { verifySignature } from "@/lib/n8n";
-import { CATEGORIES, SCORE_TO_RAG } from "@/lib/constants/categories";
+import { CATEGORIES, SCORE_TO_RAG, NORMALIZE_SCORE } from "@/lib/constants/categories";
 
 // Inbound from n8n audit engine. Updates audit + categories on completion.
 // Also handles status='failed' from the engine.
 
 interface CategoryPayload {
   category_number: number;
-  score: number;               // 1–5 (1 = best / least opportunity, 5 = worst / most opportunity)
+  score: number;               // 0–100 from the engine (higher = better); normalised to 1–5 on store
   rag: string;                 // 'red' | 'amber' | 'green' (app recomputes from score)
   gbp_impact_annual: number;
   insufficient_data: boolean;
@@ -56,8 +56,8 @@ function validatePayload(payload: AuditCompletePayload): string | null {
   }
 
   for (const cat of payload.categories) {
-    if (!Number.isInteger(cat.score) || cat.score < 1 || cat.score > 5) {
-      return `category ${cat.category_number}: score must be an integer 1–5 (1 = best, 5 = worst), got ${cat.score}`;
+    if (typeof cat.score !== "number" || cat.score < 0 || cat.score > 100) {
+      return `category ${cat.category_number}: score must be a number 0–100, got ${cat.score}`;
     }
     if (
       cat.confidence !== undefined &&
@@ -147,12 +147,13 @@ export async function POST(request: NextRequest) {
         `n8n sent "${cat.category_name}", expected "${canonicalCategory.name}" — using canonical name`
       );
     }
+    const score = NORMALIZE_SCORE(cat.score);
     return {
       audit_id: payload.audit_id,
       category_number: cat.category_number,
       category_name: canonicalCategory?.name ?? cat.category_name ?? `Category ${cat.category_number}`,
-      score: cat.score,
-      rag: SCORE_TO_RAG(cat.score) ?? cat.rag.toLowerCase(),
+      score,
+      rag: SCORE_TO_RAG(score) ?? cat.rag?.toLowerCase(),
       confidence: cat.confidence ?? null,
       gbp_impact_annual: cat.gbp_impact_annual,
       gbp_calculation: cat.gbp_calculation ?? null,

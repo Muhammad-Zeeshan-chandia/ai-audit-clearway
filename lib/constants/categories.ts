@@ -23,6 +23,25 @@ export function SCORE_TO_RAG(score: number | null | undefined): "GREEN" | "AMBER
   return "RED";
 }
 
+/**
+ * Normalises an incoming category score to the app's 1–5 scale.
+ *
+ * The n8n audit engine emits scores on a 0–100 scale (higher = better /
+ * less opportunity). The app stores 1–5 (1 = best, 5 = worst). The bands are
+ * inverted and chosen so the resulting RAG matches the engine's:
+ *   >70 → GREEN (1–2), 40–70 → AMBER (3), <40 → RED (4–5).
+ * Values already within 1–5 are passed through unchanged.
+ */
+export function NORMALIZE_SCORE(raw: number): number {
+  if (Number.isInteger(raw) && raw >= 1 && raw <= 5) return raw;
+  const s = Math.max(0, Math.min(100, raw));
+  if (s >= 85) return 1;
+  if (s > 70) return 2;
+  if (s >= 40) return 3;
+  if (s >= 20) return 4;
+  return 5;
+}
+
 export const RAG_COLORS = {
   GREEN: { bg: "bg-emerald-100", text: "text-emerald-700", dot: "bg-emerald-500", border: "border-emerald-200" },
   AMBER: { bg: "bg-amber-100",   text: "text-amber-700",   dot: "bg-amber-500",   border: "border-amber-200"   },
