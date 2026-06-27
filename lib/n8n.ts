@@ -289,7 +289,7 @@ export async function fireAskQuestionsWebhook(
   payload: EmailFollowupPayload,
   auditId: string
 ): Promise<void> {
-  return fireWebhook("N8N_FOLLOWUP_EMAIL_WEBHOOK_URL", payload, auditId);
+  return fireWebhook("N8N_EMAIL_FOLLOWUP_WEBHOOK_URL", payload, auditId);
 }
 
 // "Generate PDF" — separate workflow; builds + stores the PDF, then calls
