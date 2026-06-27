@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
-import { verifySignature } from "@/lib/n8n";
+import { verifySignature, generateMagicLink, fireSendQuestionnaireWebhook } from "@/lib/n8n";
 
 // POST /api/n8n/discovery-call
 // Inbound from n8n internal form. Creates or updates the client record,
@@ -169,6 +169,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: callErr.message }, { status: 500 });
   }
 
+  // 3b. Email the client their questionnaire magic link (delivered by n8n).
+  //     Only meaningful while the audit is still awaiting its questionnaire.
+  const { data: auditStatusRow } = await service
+    .from("audits")
+    .select("status")
+    .eq("id", auditId)
+    .single();
+
+  let questionnaireSent = false;
+  if (auditStatusRow?.status === "awaiting_questionnaire") {
+    const magicLink = await generateMagicLink(
+      service,
+      email,
+      `/portal/questionnaire/${auditId}`
+    );
+
+    if (magicLink) {
+      questionnaireSent = true;
+      fireSendQuestionnaireWebhook(
+        {
+          audit_id: auditId,
+          client_email: email,
+          client_name: payload.owner_name ?? null,
+          business_name: payload.business_name,
+          magic_link: magicLink,
+          is_resend: Boolean(existingAudit),
+        },
+        auditId
+      ).catch((err) =>
+        console.error("[discovery-call] send-questionnaire webhook error:", err)
+      );
+    }
+  }
+
   await service.from("audit_log").insert({
     actor_id: null,
     action: "audit.discovery_call_received",
@@ -179,6 +213,7 @@ export async function POST(request: NextRequest) {
       call_date: payload.call_date,
       call_number: payload.call_number,
       consent_captured: payload.consent_captured,
+      questionnaire_invite_sent: questionnaireSent,
     },
   });
 
