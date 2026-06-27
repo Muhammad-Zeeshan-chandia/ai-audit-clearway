@@ -44,6 +44,32 @@ export interface AuditEnginePayload {
     question_text: string;
     answer_text: string;
   }>;
+  // The complete result of the initial run — passed into the final run so it
+  // builds on (rather than redoes) the first pass. Empty/null on the initial run.
+  initial_audit: {
+    total_opportunity_gbp: number | null;
+    final_tier: string | null;
+    audit_size_score: number | null;
+    executive_summary: string | null;
+    flagged_for_review: boolean;
+    flag_reasons: string[] | null;
+    categories: Array<{
+      category_number: number;
+      category_name: string;
+      score: number | null;
+      rag: string | null;
+      confidence: number | null;
+      gbp_impact_annual: number | null;
+      gbp_calculation: string | null;
+      evidence: string | null;
+      solution_category: string | null;
+      report_section: string | null;
+      insufficient_data: boolean;
+      used_defaults: boolean;
+      contradiction_flag: boolean;
+      missing_questions: string[] | null;
+    }>;
+  };
   run_stage: "initial" | "final";
   review_notes: string | null;            // null on initial run, set on rebuilds
   callback_url: string;
@@ -184,7 +210,9 @@ export async function buildAuditEnginePayload(
 
   const { data: newAudit } = await service
     .from("audits")
-    .select("id, client_id, transcript_path, clients(business_name, sector, owner_name, website_url)")
+    .select(
+      "id, client_id, transcript_path, total_opportunity_gbp, final_tier, audit_size_score, executive_summary, flagged_for_review, flag_reasons, clients(business_name, sector, owner_name, website_url)"
+    )
     .eq("id", auditId)
     .single();
 
@@ -194,6 +222,8 @@ export async function buildAuditEnginePayload(
   const rawClients = newAudit.clients as ClientShape[] | null;
   const client = Array.isArray(rawClients) ? rawClients[0] : (rawClients as unknown as ClientShape | null);
   if (!client) return null;
+
+  const auditRec = newAudit as Record<string, unknown>;
 
   // Latest questionnaire for the new audit (copied forward on rebuild)
   const { data: questionnaire } = await service
@@ -223,6 +253,15 @@ export async function buildAuditEnginePayload(
     .eq("audit_id", auditId)
     .order("category_number", { ascending: true });
 
+  // The initial run's full output (the current category rows on this audit).
+  const { data: priorCategories } = await service
+    .from("audit_categories")
+    .select(
+      "category_number, category_name, score, rag, confidence, gbp_impact_annual, gbp_calculation, evidence, solution_category, report_section, insufficient_data, used_defaults, contradiction_flag, missing_questions"
+    )
+    .eq("audit_id", auditId)
+    .order("category_number", { ascending: true });
+
   return {
     audit_id: auditId,
     previous_audit_id: previousAuditId === auditId ? null : previousAuditId,
@@ -239,6 +278,17 @@ export async function buildAuditEnginePayload(
     discovery_call: discoveryCall ? (discoveryCall as unknown as Record<string, unknown>) : null,
     client_followups: (followups ?? []) as AuditEnginePayload["client_followups"],
     followup_answers: (answers ?? []) as AuditEnginePayload["followup_answers"],
+    initial_audit: {
+      total_opportunity_gbp:
+        auditRec.total_opportunity_gbp != null ? Number(auditRec.total_opportunity_gbp) : null,
+      final_tier: (auditRec.final_tier as string | null) ?? null,
+      audit_size_score:
+        auditRec.audit_size_score != null ? Number(auditRec.audit_size_score) : null,
+      executive_summary: (auditRec.executive_summary as string | null) ?? null,
+      flagged_for_review: Boolean(auditRec.flagged_for_review),
+      flag_reasons: (auditRec.flag_reasons as string[] | null) ?? null,
+      categories: (priorCategories ?? []) as AuditEnginePayload["initial_audit"]["categories"],
+    },
     run_stage: runStage,
     review_notes: reviewNotes,
     callback_url: callbackUrl,
