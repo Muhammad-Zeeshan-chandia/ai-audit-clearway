@@ -8,41 +8,52 @@ interface QuestionGroup {
   questions: string[];
 }
 
-interface PreviousResponse {
-  id: string;
-  response_text: string;
-  submitted_at: string;
-}
-
 interface Props {
   token: string;
-  status: string;
   businessName: string;
   ownerName: string | null;
   questionGroups: QuestionGroup[];
-  previousResponses: PreviousResponse[];
 }
 
-export default function FollowupForm({
-  token,
-  status,
-  businessName,
-  ownerName,
-  questionGroups,
-  previousResponses,
-}: Props) {
-  const [responseText, setResponseText] = useState("");
+type Item = {
+  key: string;
+  category_number: number;
+  category_name: string;
+  question_text: string;
+  number: number;
+};
+
+export default function FollowupForm({ token, businessName, ownerName, questionGroups }: Props) {
+  // Flatten into individually-answerable items, keeping a running number.
+  const items: Item[] = [];
+  let n = 0;
+  for (const g of questionGroups) {
+    for (let i = 0; i < g.questions.length; i++) {
+      n += 1;
+      items.push({
+        key: `${g.category_number}::${i}`,
+        category_number: g.category_number,
+        category_name: g.category_name,
+        question_text: g.questions[i],
+        number: n,
+      });
+    }
+  }
+
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isAlreadyHandled =
-    status !== "awaiting_client_followup" || previousResponses.length > 0;
+  function setAnswer(key: string, value: string) {
+    setAnswers((prev) => ({ ...prev, [key]: value }));
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (responseText.trim().length < 10) {
-      setError("Please write at least a couple of sentences.");
+    const unanswered = items.filter((it) => (answers[it.key] ?? "").trim().length < 2);
+    if (unanswered.length > 0) {
+      setError(`Please answer all ${items.length} questions before submitting.`);
       return;
     }
     setSubmitting(true);
@@ -51,7 +62,13 @@ export default function FollowupForm({
       const res = await fetch(`/api/f/${token}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ response_text: responseText.trim() }),
+        body: JSON.stringify({
+          answers: items.map((it) => ({
+            category_number: it.category_number,
+            question_text: it.question_text,
+            answer_text: (answers[it.key] ?? "").trim(),
+          })),
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -66,35 +83,21 @@ export default function FollowupForm({
     }
   }
 
-  if (submitted || isAlreadyHandled) {
+  if (submitted) {
     return (
       <div className="rounded-md border border-[--border] bg-[--bg-primary] p-8 text-center">
         <h1 className="text-xl font-semibold text-[--text-primary]">
-          Thanks — we’ve got what we need
+          Thanks — we’ve got your answers
         </h1>
         <p className="mt-3 text-sm text-[--text-secondary]">
-          Your follow-up is in. The team will fold it into your audit and send you
-          the updated report by email.
+          Your answers are in. Our team is folding them into your audit and will send you
+          the final report by email.
         </p>
+        <p className="mt-4 text-xs text-[--text-tertiary]">You can close this window.</p>
       </div>
     );
   }
 
-  if (questionGroups.length === 0) {
-    return (
-      <div className="rounded-md border border-[--border] bg-[--bg-primary] p-8 text-center">
-        <h1 className="text-xl font-semibold text-[--text-primary]">
-          Nothing to answer right now
-        </h1>
-        <p className="mt-3 text-sm text-[--text-secondary]">
-          We don’t have any open questions for you at the moment. If you think this
-          is wrong, please reply to the email we sent you.
-        </p>
-      </div>
-    );
-  }
-
-  const totalQuestions = questionGroups.reduce((acc, g) => acc + g.questions.length, 0);
   const firstName = ownerName?.split(" ")[0];
 
   return (
@@ -104,57 +107,51 @@ export default function FollowupForm({
           {businessName}
         </p>
         <h1 className="mt-1 text-xl font-semibold text-[--text-primary]">
-          {firstName ? `Hi ${firstName} — w` : "W"}e need a bit more info
+          {firstName ? `Hi ${firstName} — a` : "A"} few questions to sharpen your audit
         </h1>
         <p className="mt-1 text-sm text-[--text-secondary]">
-          Our team is finalising your audit and noticed a few gaps. Read the{" "}
-          {totalQuestions === 1 ? "question" : `${totalQuestions} questions`} below and
-          answer in your own words — a paragraph is fine. Takes ~2 minutes.
+          Our analysis flagged {items.length === 1 ? "one question" : `${items.length} questions`} we’d
+          like your input on. Answer each in your own words — a sentence or two is plenty.
         </p>
       </div>
 
-      <div className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-6">
         {questionGroups.map((group) => (
           <div
             key={group.category_number}
             className="rounded-md border border-[--border] bg-[--bg-primary] p-5"
           >
-            <p className="text-xs font-semibold uppercase tracking-wide text-[--text-tertiary]">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[--text-tertiary]">
               {group.category_name}
             </p>
-            <ol className="mt-3 space-y-2 text-sm text-[--text-primary]">
-              {group.questions.map((q, idx) => (
-                <li key={idx} className="flex gap-3">
-                  <span className="font-medium text-[--text-tertiary]">{idx + 1}.</span>
-                  <span>{q}</span>
-                </li>
-              ))}
-            </ol>
+            <div className="space-y-5">
+              {group.questions.map((q, i) => {
+                const item = items.find(
+                  (it) => it.category_number === group.category_number && it.key === `${group.category_number}::${i}`
+                )!;
+                return (
+                  <div key={item.key}>
+                    <label
+                      htmlFor={item.key}
+                      className="block text-sm font-medium text-[--text-primary]"
+                    >
+                      <span className="mr-1.5 text-[--text-tertiary]">{item.number}.</span>
+                      {q}
+                    </label>
+                    <textarea
+                      id={item.key}
+                      rows={3}
+                      value={answers[item.key] ?? ""}
+                      onChange={(e) => setAnswer(item.key, e.target.value)}
+                      placeholder="Your answer…"
+                      className="mt-2 w-full resize-y rounded-md border border-[--border] bg-[--bg-secondary] p-3 text-sm text-[--text-primary] placeholder:text-[--text-tertiary] focus:border-[--accent] focus:outline-none focus:ring-2 focus:ring-[--accent]/20"
+                    />
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ))}
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label htmlFor="response" className="block text-sm font-medium text-[--text-primary]">
-            Your response
-          </label>
-          <p className="mt-1 text-xs text-[--text-tertiary]">
-            Address the questions above in any order — a single paragraph or labelled
-            answers, whatever’s easiest.
-          </p>
-          <textarea
-            id="response"
-            name="response"
-            required
-            minLength={10}
-            value={responseText}
-            onChange={(e) => setResponseText(e.target.value)}
-            rows={12}
-            placeholder="Type your answers here…"
-            className="mt-3 w-full resize-y rounded-md border border-[--border] bg-[--bg-secondary] p-3 text-sm text-[--text-primary] placeholder:text-[--text-tertiary] focus:border-[--accent] focus:outline-none focus:ring-2 focus:ring-[--accent]/20"
-          />
-        </div>
 
         {error && (
           <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -171,7 +168,7 @@ export default function FollowupForm({
             disabled={submitting}
             className="inline-flex shrink-0 items-center justify-center rounded-md bg-[--accent] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {submitting ? "Submitting…" : "Submit follow-up"}
+            {submitting ? "Submitting…" : "Submit answers"}
           </button>
         </div>
       </form>

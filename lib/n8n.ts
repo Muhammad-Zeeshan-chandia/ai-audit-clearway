@@ -39,6 +39,12 @@ export interface AuditEnginePayload {
     source: "email_form" | "manual";
     submitted_at: string;
   }>;
+  followup_answers: Array<{
+    category_number: number | null;
+    question_text: string;
+    answer_text: string;
+  }>;
+  run_stage: "initial" | "final";
   review_notes: string | null;            // null on initial run, set on rebuilds
   callback_url: string;
 }
@@ -169,11 +175,12 @@ export async function buildAuditEnginePayload(
     auditId: string;
     previousAuditId: string;
     rebuildCount: number;
+    runStage: "initial" | "final";
     reviewNotes: string | null;
     callbackUrl: string;
   }
 ): Promise<AuditEnginePayload | null> {
-  const { auditId, previousAuditId, rebuildCount, reviewNotes, callbackUrl } = args;
+  const { auditId, previousAuditId, rebuildCount, runStage, reviewNotes, callbackUrl } = args;
 
   const { data: newAudit } = await service
     .from("audits")
@@ -203,12 +210,18 @@ export async function buildAuditEnginePayload(
     .eq("audit_id", auditId)
     .maybeSingle();
 
-  // Followups come from the previous audit (history)
+  // Free-text follow-ups (history) + the client's per-question answers
   const { data: followups } = await service
     .from("client_followups")
     .select("id, response_text, source, submitted_at")
     .eq("audit_id", previousAuditId)
     .order("submitted_at", { ascending: true });
+
+  const { data: answers } = await service
+    .from("followup_answers")
+    .select("category_number, question_text, answer_text")
+    .eq("audit_id", auditId)
+    .order("category_number", { ascending: true });
 
   return {
     audit_id: auditId,
@@ -225,16 +238,27 @@ export async function buildAuditEnginePayload(
     },
     discovery_call: discoveryCall ? (discoveryCall as unknown as Record<string, unknown>) : null,
     client_followups: (followups ?? []) as AuditEnginePayload["client_followups"],
+    followup_answers: (answers ?? []) as AuditEnginePayload["followup_answers"],
+    run_stage: runStage,
     review_notes: reviewNotes,
     callback_url: callbackUrl,
   };
 }
 
-export async function fireRunAuditWebhook(
+// Run 1 of 2 — initial audit (produces questions, no PDF).
+export async function fireInitialAuditWebhook(
   payload: AuditEnginePayload,
   auditId: string
 ): Promise<void> {
-  return fireWebhook("N8N_RUN_AUDIT_WEBHOOK_URL", payload, auditId);
+  return fireWebhook("N8N_INITIAL_AUDIT_WEBHOOK_URL", payload, auditId);
+}
+
+// Run 2 of 2 — final audit with full context (no questions, no PDF).
+export async function fireFinalAuditWebhook(
+  payload: AuditEnginePayload,
+  auditId: string
+): Promise<void> {
+  return fireWebhook("N8N_FINAL_AUDIT_WEBHOOK_URL", payload, auditId);
 }
 
 export async function fireSendAuditWebhook(
@@ -253,13 +277,6 @@ export async function fireSendAuditWebhook(
   return fireWebhook("N8N_SEND_AUDIT_WEBHOOK_URL", payload, auditId);
 }
 
-export async function fireRerunAuditWebhook(
-  payload: AuditEnginePayload,
-  auditId: string
-): Promise<void> {
-  return fireWebhook("N8N_RERUN_WEBHOOK_URL", payload, auditId);
-}
-
 export async function fireSendQuestionnaireWebhook(
   payload: SendQuestionnairePayload,
   auditId: string
@@ -267,11 +284,28 @@ export async function fireSendQuestionnaireWebhook(
   return fireWebhook("N8N_SEND_QUESTIONNAIRE_WEBHOOK_URL", payload, auditId);
 }
 
-export async function fireEmailFollowupWebhook(
+// "Ask Questions" — emails the client a magic link to the questions page.
+export async function fireAskQuestionsWebhook(
   payload: EmailFollowupPayload,
   auditId: string
 ): Promise<void> {
-  return fireWebhook("N8N_EMAIL_FOLLOWUP_WEBHOOK_URL", payload, auditId);
+  return fireWebhook("N8N_FOLLOWUP_EMAIL_WEBHOOK_URL", payload, auditId);
+}
+
+// "Generate PDF" — separate workflow; builds + stores the PDF, then calls
+// /api/webhooks/pdf-ready.
+export async function firePdfGenWebhook(
+  payload: {
+    audit_id: string;
+    callback_url: string;
+    categories: Array<{ category_number: number; category_name: string; report_section: string | null }>;
+    executive_summary: string | null;
+    final_tier: string | null;
+    total_opportunity_gbp: number | null;
+  },
+  auditId: string
+): Promise<void> {
+  return fireWebhook("N8N_PDF_GEN_WEBHOOK_URL", payload, auditId);
 }
 
 export async function fireDeletionConfirmationWebhook(
@@ -279,15 +313,4 @@ export async function fireDeletionConfirmationWebhook(
   auditId: string | null
 ): Promise<void> {
   return fireWebhook("N8N_DELETION_CONFIRMATION_WEBHOOK_URL", payload, auditId);
-}
-
-export async function fireRegeneratePdfWebhook(
-  payload: {
-    audit_id: string;
-    categories: Array<{ category_number: number; report_section: string }>;
-    executive_summary?: string;
-  },
-  auditId: string
-): Promise<void> {
-  return fireWebhook("N8N_REGENERATE_PDF_WEBHOOK_URL", payload, auditId);
 }

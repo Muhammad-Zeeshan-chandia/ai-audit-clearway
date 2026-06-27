@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
-import { fireRunAuditWebhook, buildAuditEnginePayload } from "@/lib/n8n";
+import { fireInitialAuditWebhook, buildAuditEnginePayload } from "@/lib/n8n";
 
 // POST /api/q/[token]/submit
 // Public — the access token is the credential. Saves the questionnaire,
@@ -62,25 +62,26 @@ export async function POST(
       .insert({ audit_id: audit.id, data: questionnaire_data, submitted_at: now });
   }
 
-  // 2. Transition to audit_running
+  // 2. Transition to audit_running (initial run)
   await service
     .from("audits")
-    .update({ status: "audit_running", questionnaire_submitted_at: now })
+    .update({ status: "audit_running", run_stage: "initial", questionnaire_submitted_at: now })
     .eq("id", audit.id);
 
-  // 3. Fire the n8n audit engine
+  // 3. Fire the initial n8n audit engine
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const payload = await buildAuditEnginePayload(service, {
     auditId: audit.id,
     previousAuditId: audit.id,
     rebuildCount: 0,
+    runStage: "initial",
     reviewNotes: null,
     callbackUrl: `${appUrl}/api/webhooks/audit-complete`,
   });
 
   if (payload) {
-    fireRunAuditWebhook(payload, audit.id).catch((err) =>
-      console.error("[q/submit] run-audit webhook error:", err)
+    fireInitialAuditWebhook(payload, audit.id).catch((err) =>
+      console.error("[q/submit] initial-audit webhook error:", err)
     );
   }
 

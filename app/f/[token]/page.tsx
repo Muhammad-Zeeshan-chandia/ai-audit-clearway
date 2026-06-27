@@ -62,43 +62,63 @@ export default async function PublicFollowupPage({
   const rawClient = audit.clients as ClientShape[] | ClientShape | null;
   const client = Array.isArray(rawClient) ? rawClient[0] : rawClient;
 
+  // Already answered?
+  const { count: answerCount } = await service
+    .from("followup_answers")
+    .select("id", { count: "exact", head: true })
+    .eq("audit_id", audit.id);
+
+  if ((answerCount ?? 0) > 0 || audit.status === "answers_received") {
+    return (
+      <Notice
+        title="Thanks — we’ve got your answers"
+        body="Your answers are in. Our team is folding them into your audit and will send you the final report by email."
+      />
+    );
+  }
+
+  if (audit.status !== "awaiting_answers") {
+    return (
+      <Notice
+        title="Nothing to answer right now"
+        body="We don’t have any open questions for you at the moment. If you think this is wrong, please reply to the email we sent you."
+      />
+    );
+  }
+
   const { data: cats } = await service
     .from("audit_categories")
-    .select("category_number, insufficient_data, missing_questions")
+    .select("category_number, missing_questions")
     .eq("audit_id", audit.id)
     .order("category_number");
 
   const questionGroups = (cats ?? [])
-    .filter(
-      (c) =>
-        c.insufficient_data &&
-        Array.isArray(c.missing_questions) &&
-        (c.missing_questions as string[]).length > 0
-    )
+    .filter((c) => Array.isArray(c.missing_questions) && (c.missing_questions as string[]).length > 0)
     .map((c) => {
-      const canonical = CATEGORIES.find((x) => x.number === c.category_number);
+      const canon = CATEGORIES.find((x) => x.number === c.category_number);
       return {
         category_number: c.category_number,
-        category_name: canonical?.name ?? `Category ${c.category_number}`,
+        category_name: canon?.name ?? `Category ${c.category_number}`,
         questions: c.missing_questions as string[],
       };
     });
 
-  const { data: existingFollowups } = await service
-    .from("client_followups")
-    .select("id, response_text, submitted_at")
-    .eq("audit_id", audit.id)
-    .order("submitted_at", { ascending: true });
+  if (questionGroups.length === 0) {
+    return (
+      <Notice
+        title="Nothing to answer right now"
+        body="We don’t have any open questions for you at the moment. If you think this is wrong, please reply to the email we sent you."
+      />
+    );
+  }
 
   return (
     <Shell>
       <FollowupForm
         token={params.token}
-        status={audit.status}
         businessName={client?.business_name ?? "your business"}
         ownerName={client?.owner_name ?? null}
         questionGroups={questionGroups}
-        previousResponses={existingFollowups ?? []}
       />
     </Shell>
   );

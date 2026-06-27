@@ -23,10 +23,17 @@ export async function POST(
 
   if (auditErr || !audit) return NextResponse.json({ error: "Audit not found" }, { status: 404 });
 
-  // Allow approve from any review-ready status
-  if (!["awaiting_review", "followup_received", "approved"].includes(audit.status)) {
+  // Approve & Send is only available once the final audit is reviewed AND the
+  // PDF has been generated.
+  if (audit.status !== "final_review") {
     return NextResponse.json(
-      { error: "Audit cannot be approved from its current status" },
+      { error: "Run the final audit before approving." },
+      { status: 409 }
+    );
+  }
+  if (!audit.pdf_path) {
+    return NextResponse.json(
+      { error: "Generate the PDF before approving & sending." },
       { status: 409 }
     );
   }

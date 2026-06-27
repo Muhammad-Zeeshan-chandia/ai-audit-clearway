@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { Clock } from "lucide-react";
 import { ReviewsTable } from "./reviews-table";
+import type { AuditStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +12,11 @@ export default async function ReviewsPage() {
   const { data: audits } = await supabase
     .from("audits")
     .select(`
-      id, total_opportunity_gbp, flagged_for_review, flag_reasons,
-      audit_run_at, final_tier,
+      id, status, total_opportunity_gbp, flagged_for_review, flag_reasons,
+      audit_run_at, final_tier, pdf_path,
       clients(business_name, email)
     `)
-    .eq("status", "awaiting_review")
+    .in("status", ["awaiting_review", "awaiting_answers", "answers_received", "final_review"])
     .is("deleted_at", null)
     .order("flagged_for_review", { ascending: false })
     .order("audit_run_at", { ascending: true });
@@ -27,11 +28,13 @@ export default async function ReviewsPage() {
       : (rawClient as unknown as { business_name: string; email: string } | null);
     return {
       id: a.id,
+      status: a.status as AuditStatus,
       total_opportunity_gbp: a.total_opportunity_gbp,
       flagged_for_review: Boolean(a.flagged_for_review),
       flag_reasons: a.flag_reasons as string[] | null,
       audit_run_at: a.audit_run_at,
       final_tier: a.final_tier as string | null,
+      pdf_ready: Boolean(a.pdf_path),
       client,
     };
   });

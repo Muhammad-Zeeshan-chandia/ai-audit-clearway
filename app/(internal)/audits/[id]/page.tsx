@@ -46,6 +46,7 @@ export default async function AuditDetailPage({ params }: { params: { id: string
     { data: questionnaireFields },
     { data: discoveryCallRaw },
     { data: clientFollowupsRaw },
+    { data: followupAnswersRaw },
     { data: siblingAuditsRaw },
   ] = await Promise.all([
     service
@@ -88,6 +89,12 @@ export default async function AuditDetailPage({ params }: { params: { id: string
       .select("id, response_text, source, submitted_at, submitted_by_user_id, users(email)")
       .eq("audit_id", params.id)
       .order("submitted_at", { ascending: true }),
+
+    service
+      .from("followup_answers")
+      .select("id, category_number, question_text, answer_text, submitted_at")
+      .eq("audit_id", params.id)
+      .order("category_number", { ascending: true }),
 
     service
       .from("audits")
@@ -191,6 +198,7 @@ export default async function AuditDetailPage({ params }: { params: { id: string
           client_id:                  audit.client_id as string,
           is_current:                 isCurrentAudit,
           rebuild_count:              rebuildCount,
+          run_stage:                  (auditRec.run_stage as "initial" | "final") ?? "initial",
         }}
         client={client}
         categories={categories}
@@ -202,6 +210,7 @@ export default async function AuditDetailPage({ params }: { params: { id: string
         questionnaireFields={(questionnaireFields ?? []) as FieldDefinition[]}
         discoveryCall={(discoveryCallRaw as unknown as DiscoveryCall | null) ?? null}
         clientFollowups={(clientFollowupsRaw ?? []) as unknown as ClientFollowupRow[]}
+        followupAnswers={(followupAnswersRaw ?? []) as Array<{ id: string; category_number: number | null; question_text: string; answer_text: string; submitted_at: string }>}
         siblingAudits={siblingAudits}
       />
     </div>

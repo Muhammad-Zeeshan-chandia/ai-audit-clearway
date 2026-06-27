@@ -45,6 +45,15 @@ interface AuditProp {
   client_id: string;
   is_current: boolean;
   rebuild_count: number;
+  run_stage: "initial" | "final";
+}
+
+interface FollowupAnswerRow {
+  id: string;
+  category_number: number | null;
+  question_text: string;
+  answer_text: string;
+  submitted_at: string;
 }
 
 type AuditVersion = {
@@ -94,6 +103,7 @@ interface Props {
   questionnaireFields: FieldDefinition[];
   discoveryCall: DiscoveryCall | null;
   clientFollowups: ClientFollowupRow[];
+  followupAnswers: FollowupAnswerRow[];
   siblingAudits: AuditVersion[];
 }
 
@@ -233,6 +243,7 @@ export function AuditEditor({
   questionnaireFields,
   discoveryCall,
   clientFollowups,
+  followupAnswers,
   siblingAudits,
 }: Props) {
   const router = useRouter();
@@ -268,19 +279,15 @@ export function AuditEditor({
   );
   const [catSaving, setCatSaving] = useState<Record<number, boolean>>({});
 
-  // Action modals
+  // Action state
   const [approveOpen, setApproveOpen]   = useState(false);
   const [approving, setApproving]       = useState(false);
-  const [changesOpen, setChangesOpen]   = useState(false);
-  const [changesNotes, setChangesNotes] = useState("");
-  const [changingReq, setChangingReq]   = useState(false);
-  const [rerunning, setRerunning]       = useState(false);
-  const [regen, setRegen]               = useState(false);
+  const [askingQuestions, setAskingQuestions] = useState(false);
+  const [runningFinal, setRunningFinal] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
   const [actionError, setActionError]             = useState<string | null>(null);
   const [actionMessage, setActionMessage]           = useState<string | null>(null);
   const [sendingQuestionnaire, setSendingQuestionnaire] = useState(false);
-  const [followupModalOpen, setFollowupModalOpen]   = useState(false);
-  const [sendingFollowup, setSendingFollowup]       = useState(false);
 
   // ── Tier override ──
   async function handleTierChange(newTier: string) {
@@ -399,51 +406,66 @@ export function AuditEditor({
     router.refresh();
   }
 
-  // ── Request Changes ──
-  async function handleRequestChanges() {
-    setChangingReq(true);
+  // ── Ask Questions (email client the questions magic link) ──
+  async function handleAskQuestions() {
+    setAskingQuestions(true);
     setActionError(null);
-    const res = await fetch(`/api/audits/${audit.id}/request-changes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ review_notes: changesNotes }),
-    });
-    setChangingReq(false);
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      setActionError(j.error ?? "Request failed.");
-      return;
-    }
-    const json = await res.json().catch(() => ({}));
-    setChangesOpen(false);
-    setChangesNotes("");
-    if ((json as Record<string, unknown>).new_audit_id) {
-      router.push(`/audits/${(json as Record<string, string>).new_audit_id}`);
-    } else {
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/audits/${audit.id}/ask-questions`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setActionError((json as { error?: string }).error ?? "Failed to send questions.");
+        return;
+      }
+      setActionMessage("Questions email sent — waiting for the client's answers.");
       router.refresh();
+    } catch {
+      setActionError("Network error sending questions.");
+    } finally {
+      setAskingQuestions(false);
     }
   }
 
-  // ── Rerun Audit ──
-  async function handleRerun() {
-    setRerunning(true);
+  // ── Run Final Audit (full context incl. answers) ──
+  async function handleRunFinal() {
+    setRunningFinal(true);
     setActionError(null);
-    const res = await fetch(`/api/audits/${audit.id}/rerun`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    setRerunning(false);
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      setActionError(j.error ?? "Rerun failed.");
-      return;
-    }
-    const json = await res.json().catch(() => ({}));
-    if ((json as Record<string, unknown>).new_audit_id) {
-      router.push(`/audits/${(json as Record<string, string>).new_audit_id}`);
-    } else {
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/audits/${audit.id}/run-final`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setActionError((json as { error?: string }).error ?? "Failed to start the final audit.");
+        return;
+      }
+      setActionMessage("Final audit started.");
       router.refresh();
+    } catch {
+      setActionError("Network error starting the final audit.");
+    } finally {
+      setRunningFinal(false);
+    }
+  }
+
+  // ── Generate PDF (separate workflow) ──
+  async function handleGeneratePdf() {
+    setGeneratingPdf(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/audits/${audit.id}/generate-pdf`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setActionError((json as { error?: string }).error ?? "Failed to start PDF generation.");
+        return;
+      }
+      setActionMessage("PDF generation started — the PDF will appear here when it's ready.");
+      router.refresh();
+    } catch {
+      setActionError("Network error starting PDF generation.");
+    } finally {
+      setGeneratingPdf(false);
     }
   }
 
@@ -468,58 +490,16 @@ export function AuditEditor({
     }
   }
 
-  // ── Email Follow-up ──
-  async function handleSendFollowup() {
-    setSendingFollowup(true);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      const res = await fetch(`/api/audits/${audit.id}/email-followup`, { method: "POST" });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setActionError((json as { error?: string }).error ?? "Failed to send follow-up");
-        return;
-      }
-      setActionMessage("Follow-up email sent. Audit status is now Awaiting follow-up.");
-      setFollowupModalOpen(false);
-      router.refresh();
-    } catch {
-      setActionError("Network error sending follow-up.");
-    } finally {
-      setSendingFollowup(false);
-    }
-  }
-
-  // ── Regenerate PDF ──
-  async function handleRegeneratePdf() {
-    setRegen(true);
-    setActionError(null);
-    const cats = Object.values(catData).sort((a, b) => a.category_number - b.category_number);
-    const res = await fetch(`/api/audits/${audit.id}/categories`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        updates: cats.map((c) => ({
-          category_number: c.category_number,
-          report_section: c.report_section ?? "",
-        })),
-      }),
-    });
-    setRegen(false);
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      setActionError(j.error ?? "Regenerate failed.");
-    }
-  }
-
-  const catValues = Object.values(catData);
-  const flaggedCategories = catValues.filter(
-    (c) =>
-      c.insufficient_data &&
-      Array.isArray(c.missing_questions) &&
-      (c.missing_questions?.length ?? 0) > 0
-  );
-  const hasFlaggedCategories = flaggedCategories.length > 0;
+  // Follow-up questions the initial run generated, grouped by category.
+  const questionGroups = Object.values(catData)
+    .filter((c) => Array.isArray(c.missing_questions) && (c.missing_questions?.length ?? 0) > 0)
+    .sort((a, b) => a.category_number - b.category_number)
+    .map((c) => ({
+      category_number: c.category_number,
+      category_name: c.category_name,
+      questions: c.missing_questions as string[],
+    }));
+  const totalQuestions = questionGroups.reduce((acc, g) => acc + g.questions.length, 0);
 
   return (
     <div className="space-y-10">
@@ -626,44 +606,53 @@ export function AuditEditor({
             </Button>
           )}
           {audit.status === "audit_running" && (
-            <span className="text-xs text-[--text-tertiary]">Audit is running…</span>
+            <span className="text-xs text-[--text-tertiary]">
+              {audit.run_stage === "final" ? "Final audit is running…" : "Initial audit is running…"}
+            </span>
           )}
-          {audit.status === "awaiting_client_followup" && (
-            <span className="text-xs text-[--text-tertiary]">Waiting for client follow-up…</span>
+          {audit.status === "awaiting_answers" && (
+            <span className="text-xs text-[--text-tertiary]">Questions sent · waiting for the client’s answers…</span>
           )}
 
-          {(audit.status === "awaiting_review" || audit.status === "followup_received" || audit.status === "approved") && (
+          {/* Ask Questions — once the initial audit (with questions) exists */}
+          {(audit.status === "awaiting_review" || audit.status === "awaiting_answers") && totalQuestions > 0 && (
+            <Button variant="primary" size="sm" loading={askingQuestions} onClick={handleAskQuestions}>
+              <Send className="h-4 w-4" />
+              {audit.status === "awaiting_answers" ? "Resend questions" : "Ask Questions"}
+              <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-xs font-semibold">
+                {totalQuestions}
+              </span>
+            </Button>
+          )}
+
+          {/* Run Final Audit — once the client's answers are received */}
+          {audit.status === "answers_received" && (
+            <Button variant="primary" size="sm" loading={runningFinal} onClick={handleRunFinal}>
+              <RefreshCw className="h-4 w-4" />
+              Run Final Audit
+            </Button>
+          )}
+
+          {/* Generate PDF — once the final audit exists */}
+          {audit.status === "final_review" && (
+            <Button variant="secondary" size="sm" loading={generatingPdf} onClick={handleGeneratePdf}>
+              <FileText className="h-4 w-4" />
+              {audit.pdf_path ? "Regenerate PDF" : "Generate PDF"}
+            </Button>
+          )}
+
+          {/* Approve & Send — once the PDF is ready */}
+          {audit.status === "final_review" && audit.pdf_path && (
             <Button variant="primary" size="sm" onClick={() => setApproveOpen(true)}>
               <Send className="h-4 w-4" />
               Approve &amp; Send
             </Button>
           )}
-          {(audit.status === "awaiting_review" || audit.status === "followup_received") && (
-            <Button variant="secondary" size="sm" onClick={() => setChangesOpen(true)}>
-              <RefreshCw className="h-4 w-4" />
-              Request Changes
-            </Button>
+          {audit.status === "final_review" && !audit.pdf_path && (
+            <span className="text-xs text-[--text-tertiary]">Generate the PDF to enable Approve &amp; Send.</span>
           )}
-          {(audit.status === "awaiting_review" || audit.status === "followup_received") && hasFlaggedCategories && (
-            <Button variant="ghost" size="sm" onClick={() => setFollowupModalOpen(true)}>
-              <AlertTriangle className="h-4 w-4 text-amber-500" />
-              Email follow-up
-              <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">
-                {flaggedCategories.reduce((acc, c) => acc + (c.missing_questions?.length ?? 0), 0)}
-              </span>
-            </Button>
-          )}
-          {(audit.status === "awaiting_review" || audit.status === "followup_received") && (
-            <Button variant="ghost" size="sm" loading={rerunning} onClick={handleRerun}>
-              <RefreshCw className="h-4 w-4" />
-              Rerun Audit
-            </Button>
-          )}
-          {Object.keys(catData).length > 0 && (
-            <Button variant="ghost" size="sm" loading={regen} onClick={handleRegeneratePdf}>
-              <FileText className="h-4 w-4" />
-              Regenerate PDF
-            </Button>
+          {audit.status === "sent" && (
+            <span className="text-xs text-emerald-600">Approved &amp; sent to client.</span>
           )}
         </div>
       </div>
@@ -735,11 +724,68 @@ export function AuditEditor({
         </div>
         <div className="mt-4 flex items-center gap-2">
           <SaveButton loading={qSaving} onClick={saveQuestionnaire} label="Save questionnaire" />
-          <p className="text-xs text-[--text-tertiary]">
-            Save does not auto-rerun. Use &quot;Rerun Audit&quot; to trigger fresh AI output.
-          </p>
         </div>
       </div>
+
+      {/* ── Follow-up questions (from the initial run) ── */}
+      {questionGroups.length > 0 && (
+        <div>
+          <SectionTitle>
+            Follow-up questions
+            <span className="ml-2 rounded-full bg-[--bg-tertiary] px-2 py-0.5 text-xs font-medium text-[--text-secondary]">
+              {totalQuestions}
+            </span>
+          </SectionTitle>
+          <p className="mb-3 -mt-2 text-xs text-[--text-tertiary]">
+            Generated by the initial audit. Use <strong>Ask Questions</strong> to email these to the client.
+          </p>
+          <div className="space-y-4">
+            {(() => {
+              let running = 0;
+              return questionGroups.map((g) => (
+                <div key={g.category_number} className="rounded-md border border-[--border] bg-[--bg-primary] p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[--text-tertiary]">
+                    {g.category_name}
+                  </p>
+                  <ol className="mt-2 space-y-1.5 text-sm text-[--text-primary]">
+                    {g.questions.map((q, idx) => {
+                      running += 1;
+                      return (
+                        <li key={idx} className="flex gap-2">
+                          <span className="text-[--text-tertiary]">{running}.</span>
+                          <span>{q}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </div>
+              ));
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* ── Client's answers (once received) ── */}
+      {followupAnswers.length > 0 && (
+        <div>
+          <SectionTitle>
+            Client’s answers
+            <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+              {followupAnswers.length}
+            </span>
+          </SectionTitle>
+          <div className="space-y-3">
+            {followupAnswers.map((a, idx) => (
+              <div key={a.id} className="rounded-md border border-[--border] bg-[--bg-primary] p-4">
+                <p className="text-sm font-medium text-[--text-primary]">
+                  <span className="text-[--text-tertiary]">{idx + 1}.</span> {a.question_text}
+                </p>
+                <p className="mt-1.5 whitespace-pre-wrap text-sm text-[--text-secondary]">{a.answer_text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Section 5: Discovery call ── */}
       <div>
@@ -843,19 +889,16 @@ export function AuditEditor({
                     </p>
                     <h3 className="text-sm font-semibold text-[--text-primary]">{canonCat.name}</h3>
                     <p className="text-xs text-[--text-tertiary]">{canonCat.description}</p>
-                    {cat?.insufficient_data &&
-                      Array.isArray(cat.missing_questions) &&
-                      (cat.missing_questions?.length ?? 0) > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setFollowupModalOpen(true)}
-                          className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-200"
-                          title="Click to review questions and email client"
+                    {Array.isArray(cat?.missing_questions) &&
+                      (cat?.missing_questions?.length ?? 0) > 0 && (
+                        <span
+                          className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800"
+                          title="See the Follow-up questions section below"
                         >
                           <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                          {cat.missing_questions.length} question
-                          {cat.missing_questions.length === 1 ? "" : "s"} needed
-                        </button>
+                          {cat!.missing_questions!.length} question
+                          {cat!.missing_questions!.length === 1 ? "" : "s"}
+                        </span>
                       )}
                   </div>
                   {rag && (
@@ -1040,15 +1083,19 @@ export function AuditEditor({
             <p className="text-xs font-medium text-[--text-tertiary]">Audit PDF</p>
             {pdfUrl ? (
               <div className="flex gap-2">
-                <a href={pdfUrl} download>
-                  <Button variant="secondary" size="sm"><Download className="h-4 w-4" /> Download PDF</Button>
-                </a>
                 <a href={pdfUrl} target="_blank" rel="noopener noreferrer">
-                  <Button variant="ghost" size="sm"><ExternalLink className="h-4 w-4" /> Open PDF</Button>
+                  <Button variant="primary" size="sm"><ExternalLink className="h-4 w-4" /> View PDF</Button>
+                </a>
+                <a href={pdfUrl} download>
+                  <Button variant="secondary" size="sm"><Download className="h-4 w-4" /> Download</Button>
                 </a>
               </div>
             ) : (
-              <p className="text-sm text-[--text-tertiary]">PDF not available yet.</p>
+              <p className="text-sm text-[--text-tertiary]">
+                {audit.status === "final_review"
+                  ? "No PDF yet — use Generate PDF above."
+                  : "PDF is generated after the final audit."}
+              </p>
             )}
           </div>
         </div>
@@ -1098,66 +1145,10 @@ export function AuditEditor({
 
       {/* Approve modal */}
       <Dialog open={approveOpen} onClose={() => setApproveOpen(false)} title="Approve & Send" size="sm"
-        description="The PDF will be emailed to the client and the audit marked as Sent. This cannot be undone.">
+        description="The finished audit PDF will be emailed to the client and the audit marked as Sent. This cannot be undone.">
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => setApproveOpen(false)} disabled={approving}>Cancel</Button>
           <Button variant="primary" size="sm" loading={approving} onClick={handleApprove}>Confirm &amp; Send</Button>
-        </DialogFooter>
-      </Dialog>
-
-      {/* Request changes modal */}
-      <Dialog open={changesOpen} onClose={() => setChangesOpen(false)} title="Request changes" size="md"
-        description="Describe what needs to change. The audit engine will re-run with this feedback.">
-        <Textarea
-          rows={4}
-          placeholder="e.g. The Lead Capture score seems too low — the client mentioned 80% close rate..."
-          value={changesNotes}
-          onChange={(e) => setChangesNotes(e.target.value)}
-          disabled={changingReq}
-        />
-        <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={() => setChangesOpen(false)} disabled={changingReq}>Cancel</Button>
-          <Button variant="primary" size="sm" loading={changingReq} onClick={handleRequestChanges} disabled={!changesNotes.trim()}>
-            Submit &amp; re-run
-          </Button>
-        </DialogFooter>
-      </Dialog>
-
-      {/* Email follow-up modal */}
-      <Dialog
-        open={followupModalOpen}
-        onClose={() => { if (!sendingFollowup) setFollowupModalOpen(false); }}
-        title="Email follow-up to client"
-        description="The client will receive a magic link listing these questions. Status will move to Awaiting follow-up until they respond."
-        size="lg"
-      >
-        <div className="max-h-64 overflow-y-auto space-y-5">
-          {flaggedCategories.map((c) => {
-            const canonical = CATEGORIES.find((x) => x.number === c.category_number);
-            return (
-              <section key={c.category_number}>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-[--text-tertiary]">
-                  {canonical?.name ?? `Category ${c.category_number}`}
-                </h3>
-                <ol className="mt-2 space-y-1.5 text-sm text-[--text-primary]">
-                  {(c.missing_questions ?? []).map((q, idx) => (
-                    <li key={idx} className="flex gap-2">
-                      <span className="text-[--text-tertiary]">{idx + 1}.</span>
-                      <span>{q}</span>
-                    </li>
-                  ))}
-                </ol>
-              </section>
-            );
-          })}
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={() => setFollowupModalOpen(false)} disabled={sendingFollowup}>
-            Cancel
-          </Button>
-          <Button variant="primary" size="sm" loading={sendingFollowup} onClick={handleSendFollowup}>
-            Send to client
-          </Button>
         </DialogFooter>
       </Dialog>
     </div>

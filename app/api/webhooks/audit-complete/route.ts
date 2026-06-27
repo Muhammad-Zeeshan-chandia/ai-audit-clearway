@@ -41,7 +41,6 @@ interface AuditCompletePayload {
   executive_summary?: string;
   flagged_for_review: boolean;
   flag_reasons: string[];
-  pdf_path: string;
   error_text?: string;
 }
 
@@ -112,7 +111,7 @@ export async function POST(request: NextRequest) {
 
   const { data: audit, error: auditError } = await service
     .from("audits")
-    .select("id, client_id, status")
+    .select("id, client_id, status, run_stage")
     .eq("id", payload.audit_id)
     .single();
 
@@ -181,17 +180,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: categoryError.message }, { status: 500 });
   }
 
+  // Initial run -> awaiting_review (questions shown); final run -> final_review.
+  // Neither run produces a PDF — that's the separate Generate PDF workflow.
+  const nextStatus = audit.run_stage === "final" ? "final_review" : "awaiting_review";
+
   const { error: updateError } = await service
     .from("audits")
     .update({
-      status: "awaiting_review",
+      status: nextStatus,
       total_opportunity_gbp: payload.total_opportunity_gbp,
       final_tier: NORMALIZE_TIER(payload.final_tier, payload.total_opportunity_gbp),
       audit_size_score: payload.audit_size_score ?? null,
       executive_summary: payload.executive_summary ?? null,
       flagged_for_review: payload.flagged_for_review,
       flag_reasons: payload.flag_reasons,
-      pdf_path: payload.pdf_path,
       audit_run_at: new Date().toISOString(),
     })
     .eq("id", payload.audit_id);
