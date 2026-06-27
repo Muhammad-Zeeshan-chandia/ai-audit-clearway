@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { fireSendQuestionnaireWebhook, generateMagicLink } from "@/lib/n8n";
+import { fireSendQuestionnaireWebhook, clientQuestionnaireUrl } from "@/lib/n8n";
 
 // GET /api/clients?page=1&search=&sector=&from=&to=
 export async function GET(request: NextRequest) {
@@ -123,7 +123,7 @@ export async function POST(request: NextRequest) {
       client_id: client.id,
       status: "awaiting_questionnaire",
     })
-    .select("id")
+    .select("id, access_token")
     .single();
 
   if (auditError) {
@@ -154,26 +154,18 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // 4. Generate magic link and fire n8n questionnaire webhook
-  const magicLink = await generateMagicLink(
-    serviceClient,
-    client.email,
-    `/portal/questionnaire/${audit.id}`
-  );
-
-  if (magicLink) {
-    fireSendQuestionnaireWebhook(
-      {
-        audit_id: audit.id,
-        client_email: client.email,
-        client_name: client.owner_name,
-        business_name: client.business_name,
-        magic_link: magicLink,
-        is_resend: false,
-      },
-      audit.id
-    ).catch((err) => console.error("[clients] send-questionnaire webhook error:", err));
-  }
+  // 4. Fire n8n questionnaire webhook with the direct (passwordless) link
+  fireSendQuestionnaireWebhook(
+    {
+      audit_id: audit.id,
+      client_email: client.email,
+      client_name: client.owner_name,
+      business_name: client.business_name,
+      magic_link: clientQuestionnaireUrl(audit.access_token as string),
+      is_resend: false,
+    },
+    audit.id
+  ).catch((err) => console.error("[clients] send-questionnaire webhook error:", err));
 
   // 5. Log to audit_log
   await serviceClient.from("audit_log").insert({
@@ -185,7 +177,7 @@ export async function POST(request: NextRequest) {
       audit_id: audit.id,
       business_name: client.business_name,
       transcript_uploaded: Boolean(transcriptPath),
-      magic_link_sent: Boolean(magicLink),
+      invite_sent: true,
     },
   });
 

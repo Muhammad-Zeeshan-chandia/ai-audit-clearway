@@ -20,7 +20,7 @@ export default async function InternalLayout({
     .single();
 
   if (!profile) redirect("/login");
-  if (!["admin", "staff"].includes(profile.role)) redirect("/portal");
+  if (!["admin", "staff"].includes(profile.role)) redirect("/login");
 
   return (
     <div className="flex min-h-screen bg-[--bg-secondary]">

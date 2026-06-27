@@ -1,23 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/server";
 import { fireRunAuditWebhook, buildAuditEnginePayload } from "@/lib/n8n";
 
-// POST /api/questionnaires/[audit_id]/submit
-// STAFF-ONLY (gated by middleware). Used by the internal audit editor to enter
-// and submit a questionnaire on the client's behalf. Saves the questionnaire,
+// POST /api/q/[token]/submit
+// Public — the access token is the credential. Saves the questionnaire,
 // transitions the audit to audit_running, and fires the n8n audit engine.
-// Clients use the public, token-based /api/q/[token]/submit instead.
 export async function POST(
   request: NextRequest,
-  { params }: { params: { audit_id: string } }
+  { params }: { params: { token: string } }
 ) {
-  const supabase = createClient();
   const service = createServiceClient();
-
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (authError || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
 
   let body: { questionnaire_data: Record<string, unknown> };
   try {
@@ -31,17 +23,21 @@ export async function POST(
     return NextResponse.json({ error: "questionnaire_data is required" }, { status: 400 });
   }
 
-  const { data: audit, error: auditError } = await service
+  // Resolve audit by access token
+  const { data: audit } = await service
     .from("audits")
-    .select("id, status, client_id")
-    .eq("id", params.audit_id)
-    .single();
+    .select("id, status, is_current, client_id")
+    .eq("access_token", params.token)
+    .maybeSingle();
 
-  if (auditError || !audit) {
-    return NextResponse.json({ error: "Audit not found" }, { status: 404 });
+  if (!audit) {
+    return NextResponse.json({ error: "Invalid link" }, { status: 404 });
+  }
+  if (!audit.is_current) {
+    return NextResponse.json({ error: "This audit is no longer active" }, { status: 409 });
   }
   if (audit.status !== "awaiting_questionnaire") {
-    return NextResponse.json({ error: "Audit is not awaiting questionnaire" }, { status: 409 });
+    return NextResponse.json({ error: "Questionnaire already submitted" }, { status: 409 });
   }
 
   const now = new Date().toISOString();
@@ -50,7 +46,7 @@ export async function POST(
   const { data: existingQ } = await service
     .from("questionnaires")
     .select("id")
-    .eq("audit_id", params.audit_id)
+    .eq("audit_id", audit.id)
     .order("submitted_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -63,38 +59,38 @@ export async function POST(
   } else {
     await service
       .from("questionnaires")
-      .insert({ audit_id: params.audit_id, data: questionnaire_data, submitted_at: now });
+      .insert({ audit_id: audit.id, data: questionnaire_data, submitted_at: now });
   }
 
   // 2. Transition to audit_running
   await service
     .from("audits")
     .update({ status: "audit_running", questionnaire_submitted_at: now })
-    .eq("id", params.audit_id);
+    .eq("id", audit.id);
 
   // 3. Fire the n8n audit engine
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const payload = await buildAuditEnginePayload(service, {
-    auditId: params.audit_id,
-    previousAuditId: params.audit_id,
+    auditId: audit.id,
+    previousAuditId: audit.id,
     rebuildCount: 0,
     reviewNotes: null,
     callbackUrl: `${appUrl}/api/webhooks/audit-complete`,
   });
 
   if (payload) {
-    fireRunAuditWebhook(payload, params.audit_id).catch((err) =>
-      console.error("[questionnaires/submit] webhook error:", err)
+    fireRunAuditWebhook(payload, audit.id).catch((err) =>
+      console.error("[q/submit] run-audit webhook error:", err)
     );
   }
 
   // 4. Audit log
   await service.from("audit_log").insert({
-    actor_id: user.id,
+    actor_id: null,
     action: "audit.questionnaire_submitted",
     entity_type: "audit",
-    entity_id: params.audit_id,
-    metadata: { client_id: audit.client_id, source: "staff_editor" },
+    entity_id: audit.id,
+    metadata: { client_id: audit.client_id, source: "public_link" },
   });
 
   return NextResponse.json({ ok: true });

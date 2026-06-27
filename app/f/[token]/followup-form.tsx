@@ -1,8 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 interface QuestionGroup {
   category_number: number;
@@ -17,7 +15,7 @@ interface PreviousResponse {
 }
 
 interface Props {
-  auditId: string;
+  token: string;
   status: string;
   businessName: string;
   ownerName: string | null;
@@ -26,14 +24,13 @@ interface Props {
 }
 
 export default function FollowupForm({
-  auditId,
+  token,
   status,
   businessName,
   ownerName,
   questionGroups,
   previousResponses,
 }: Props) {
-  const router = useRouter();
   const [responseText, setResponseText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -51,19 +48,18 @@ export default function FollowupForm({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/followups/${auditId}/submit`, {
+      const res = await fetch(`/api/f/${token}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ response_text: responseText.trim() }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError((json as { error?: string }).error ?? "Something went wrong. Please try again.");
         setSubmitting(false);
         return;
       }
       setSubmitted(true);
-      router.refresh();
     } catch {
       setError("Network error. Please check your connection and try again.");
       setSubmitting(false);
@@ -72,45 +68,28 @@ export default function FollowupForm({
 
   if (submitted || isAlreadyHandled) {
     return (
-      <div className="space-y-4">
-        <div className="rounded-md border border-[--border] bg-[--bg-primary] p-8">
-          <h1 className="text-xl font-semibold text-[--text-primary]">
-            Thanks — we&rsquo;ve got what we need
-          </h1>
-          <p className="mt-3 text-sm text-[--text-secondary]">
-            Your follow-up is in. The team will fold it into your audit and send
-            you the updated report.
-          </p>
-          <div className="mt-6">
-            <Link
-              href="/portal"
-              className="text-sm font-medium text-[--accent] hover:underline"
-            >
-              Back to your portal →
-            </Link>
-          </div>
-        </div>
+      <div className="rounded-md border border-[--border] bg-[--bg-primary] p-8 text-center">
+        <h1 className="text-xl font-semibold text-[--text-primary]">
+          Thanks — we’ve got what we need
+        </h1>
+        <p className="mt-3 text-sm text-[--text-secondary]">
+          Your follow-up is in. The team will fold it into your audit and send you
+          the updated report by email.
+        </p>
       </div>
     );
   }
 
   if (questionGroups.length === 0) {
     return (
-      <div className="space-y-4">
-        <div className="rounded-md border border-[--border] bg-[--bg-primary] p-8">
-          <h1 className="text-xl font-semibold text-[--text-primary]">
-            Nothing to answer right now
-          </h1>
-          <p className="mt-3 text-sm text-[--text-secondary]">
-            We don&rsquo;t have any open questions for you at the moment. If you
-            think this is wrong, please reply to the email we sent you.
-          </p>
-          <div className="mt-6">
-            <Link href="/portal" className="text-sm font-medium text-[--accent] hover:underline">
-              Back to your portal →
-            </Link>
-          </div>
-        </div>
+      <div className="rounded-md border border-[--border] bg-[--bg-primary] p-8 text-center">
+        <h1 className="text-xl font-semibold text-[--text-primary]">
+          Nothing to answer right now
+        </h1>
+        <p className="mt-3 text-sm text-[--text-secondary]">
+          We don’t have any open questions for you at the moment. If you think this
+          is wrong, please reply to the email we sent you.
+        </p>
       </div>
     );
   }
@@ -129,8 +108,8 @@ export default function FollowupForm({
         </h1>
         <p className="mt-1 text-sm text-[--text-secondary]">
           Our team is finalising your audit and noticed a few gaps. Read the{" "}
-          {totalQuestions === 1 ? "question" : `${totalQuestions} questions`} below
-          and answer in your own words — a paragraph is fine. Takes ~2 minutes.
+          {totalQuestions === 1 ? "question" : `${totalQuestions} questions`} below and
+          answer in your own words — a paragraph is fine. Takes ~2 minutes.
         </p>
       </div>
 
@@ -157,15 +136,12 @@ export default function FollowupForm({
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label
-            htmlFor="response"
-            className="block text-sm font-medium text-[--text-primary]"
-          >
+          <label htmlFor="response" className="block text-sm font-medium text-[--text-primary]">
             Your response
           </label>
           <p className="mt-1 text-xs text-[--text-tertiary]">
             Address the questions above in any order — a single paragraph or labelled
-            answers, whatever&rsquo;s easiest.
+            answers, whatever’s easiest.
           </p>
           <textarea
             id="response"
@@ -181,7 +157,7 @@ export default function FollowupForm({
         </div>
 
         {error && (
-          <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-700/40 dark:bg-red-900/20 dark:text-red-300">
+          <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </p>
         )}

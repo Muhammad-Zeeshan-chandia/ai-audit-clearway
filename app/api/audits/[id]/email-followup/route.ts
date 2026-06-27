@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { fireEmailFollowupWebhook, generateMagicLink } from "@/lib/n8n";
+import { fireEmailFollowupWebhook, clientFollowupUrl } from "@/lib/n8n";
 import { CATEGORIES } from "@/lib/constants/categories";
 
 // POST /api/audits/[id]/email-followup
@@ -19,7 +19,7 @@ export async function POST(
 
   const { data: audit } = await service
     .from("audits")
-    .select("id, status, client_id, clients(id, email, business_name, owner_name)")
+    .select("id, status, client_id, access_token, clients(id, email, business_name, owner_name)")
     .eq("id", params.id)
     .single();
 
@@ -62,25 +62,17 @@ export async function POST(
     .update({ status: "awaiting_client_followup" })
     .eq("id", params.id);
 
-  const magicLink = await generateMagicLink(
-    service,
-    client.email,
-    `/portal/followup/${params.id}`
-  );
-
-  if (magicLink) {
-    fireEmailFollowupWebhook(
-      {
-        audit_id: params.id,
-        client_email: client.email,
-        client_name: client.owner_name,
-        business_name: client.business_name,
-        magic_link: magicLink,
-        questions_by_category: questionsByCategory,
-      },
-      params.id
-    ).catch((err) => console.error("[email-followup] webhook error:", err));
-  }
+  fireEmailFollowupWebhook(
+    {
+      audit_id: params.id,
+      client_email: client.email,
+      client_name: client.owner_name,
+      business_name: client.business_name,
+      magic_link: clientFollowupUrl(audit.access_token as string),
+      questions_by_category: questionsByCategory,
+    },
+    params.id
+  ).catch((err) => console.error("[email-followup] webhook error:", err));
 
   await service.from("audit_log").insert({
     actor_id: user.id,
@@ -88,7 +80,7 @@ export async function POST(
     entity_type: "audit",
     entity_id: params.id,
     metadata: {
-      magic_link_generated: Boolean(magicLink),
+      invite_sent: true,
       question_count: questionsByCategory.reduce((acc, g) => acc + g.questions.length, 0),
     },
   });

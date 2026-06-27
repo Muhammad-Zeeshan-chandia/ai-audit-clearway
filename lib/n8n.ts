@@ -90,6 +90,25 @@ export async function generateMagicLink(
   return `${appUrl}/auth/callback?token_hash=${data.properties.hashed_token}&type=magiclink&next=${encodeURIComponent(nextPath)}`;
 }
 
+function appBaseUrl(): string {
+  return process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+}
+
+/**
+ * Direct, passwordless link to the client questionnaire. No auth — the token
+ * is the credential. This is what we email clients (delivered by n8n).
+ */
+export function clientQuestionnaireUrl(accessToken: string): string {
+  return `${appBaseUrl()}/q/${accessToken}`;
+}
+
+/**
+ * Direct, passwordless link to the client follow-up page.
+ */
+export function clientFollowupUrl(accessToken: string): string {
+  return `${appBaseUrl()}/f/${accessToken}`;
+}
+
 async function fireWebhook(
   urlEnvKey: string,
   payload: unknown,

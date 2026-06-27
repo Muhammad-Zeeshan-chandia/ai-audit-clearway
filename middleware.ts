@@ -47,6 +47,10 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/login") ||
     pathname.startsWith("/auth/") ||
     pathname.startsWith("/_next") ||
+    pathname.startsWith("/q/") ||             // public questionnaire (token in URL)
+    pathname.startsWith("/f/") ||             // public follow-up (token in URL)
+    pathname.startsWith("/api/q/") ||         // public questionnaire submit
+    pathname.startsWith("/api/f/") ||         // public follow-up submit
     pathname.startsWith("/api/webhooks") ||  // n8n callbacks — HMAC-protected
     pathname.startsWith("/api/cron") ||       // Vercel cron — CRON_SECRET-protected
     pathname.startsWith("/api/n8n") ||        // n8n inbound routes — HMAC-protected
@@ -100,19 +104,13 @@ export async function middleware(request: NextRequest) {
 
   const role = profile?.role as string | undefined;
 
-  const isInternalPage =
-    pathname.startsWith("/dashboard") ||
-    pathname.startsWith("/clients") ||
-    pathname.startsWith("/audits") ||
-    pathname.startsWith("/reviews") ||
-    pathname.startsWith("/settings");
-
-  if (isInternalPage && role !== "admin" && role !== "staff") {
-    return NextResponse.redirect(new URL("/portal", request.url));
-  }
-
-  if (pathname.startsWith("/portal") && role !== "client") {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+  // Only staff/admin have authenticated access anywhere in the app.
+  // Clients never log in — they use passwordless /q and /f token links.
+  if (role !== "admin" && role !== "staff") {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    return NextResponse.redirect(new URL("/login", request.url));
   }
 
   return supabaseResponse;
