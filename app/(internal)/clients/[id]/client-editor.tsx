@@ -11,6 +11,14 @@ import { Tabs } from "@/components/ui/tabs";
 import { AuditStatusBadge, TierBadge, Badge } from "@/components/ui/badge";
 import type { AuditStatus, FinalTier, FieldDefinition, FieldType } from "@/lib/types";
 
+function fmt(value: number): string {
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency: "GBP",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
 const SECTOR_LABELS: Record<string, string> = {
   restaurant:          "Restaurant",
   clinic_dental:       "Dental / Clinic",
@@ -53,7 +61,6 @@ interface Props {
   totalAuditCount: number;
   activity: ActivityRow[];
   clientFields: FieldDefinition[];
-  fmt: (v: number) => string;
 }
 
 function FieldInput({
@@ -131,7 +138,7 @@ function FieldInput({
   );
 }
 
-export function ClientEditor({ client: initialClient, audits, totalAuditCount, activity, clientFields, fmt }: Props) {
+export function ClientEditor({ client: initialClient, audits, totalAuditCount, activity, clientFields }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState("info");
   const [data, setData] = useState<Record<string, unknown>>(initialClient);

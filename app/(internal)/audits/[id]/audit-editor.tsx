@@ -15,6 +15,14 @@ import { AuditStatusBadge, Badge } from "@/components/ui/badge";
 import { CATEGORIES, SCORE_TO_RAG, RAG_COLORS, TIERS } from "@/lib/constants/categories";
 import type { AuditStatus, RAG, FieldDefinition, DiscoveryCall } from "@/lib/types";
 
+function fmt(value: number): string {
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency: "GBP",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
 interface AuditProp {
   id: string;
   status: AuditStatus;
@@ -87,7 +95,6 @@ interface Props {
   discoveryCall: DiscoveryCall | null;
   clientFollowups: ClientFollowupRow[];
   siblingAudits: AuditVersion[];
-  fmt: (v: number) => string;
 }
 
 const STATUS_STEPS: Array<{ key: string; label: string; field: keyof AuditProp }> = [
@@ -227,7 +234,6 @@ export function AuditEditor({
   discoveryCall,
   clientFollowups,
   siblingAudits,
-  fmt,
 }: Props) {
   const router = useRouter();
 

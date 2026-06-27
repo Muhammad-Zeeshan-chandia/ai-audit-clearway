@@ -6,14 +6,6 @@ import { AuditEditor } from "./audit-editor";
 import type { AuditStatus, RAG, DiscoveryCall } from "@/lib/types";
 import type { FieldDefinition } from "@/lib/types";
 
-function fmt(value: number) {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
 type AuditVersion = {
   id: string;
   status: string;
@@ -211,7 +203,6 @@ export default async function AuditDetailPage({ params }: { params: { id: string
         discoveryCall={(discoveryCallRaw as unknown as DiscoveryCall | null) ?? null}
         clientFollowups={(clientFollowupsRaw ?? []) as unknown as ClientFollowupRow[]}
         siblingAudits={siblingAudits}
-        fmt={fmt}
       />
     </div>
   );

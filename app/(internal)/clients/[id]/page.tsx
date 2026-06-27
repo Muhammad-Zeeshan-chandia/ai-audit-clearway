@@ -5,14 +5,6 @@ import { ChevronLeft } from "lucide-react";
 import { ClientEditor } from "./client-editor";
 import type { AuditStatus, FinalTier, FieldDefinition } from "@/lib/types";
 
-function fmt(value: number) {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
 export default async function ClientDetailPage({ params }: { params: { id: string } }) {
   const supabase = createClient();
   const service  = createServiceClient();
@@ -88,7 +80,6 @@ export default async function ClientDetailPage({ params }: { params: { id: strin
         totalAuditCount={totalAuditCount ?? 0}
         activity={(activity ?? []) as Array<{ id: string; action: string; created_at: string; metadata: Record<string, unknown> | null }>}
         clientFields={(clientFields ?? []) as FieldDefinition[]}
-        fmt={fmt}
       />
     </div>
   );
