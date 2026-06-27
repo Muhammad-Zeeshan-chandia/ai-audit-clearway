@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { verifySignature } from "@/lib/n8n";
-import { CATEGORIES, SCORE_TO_RAG, NORMALIZE_SCORE } from "@/lib/constants/categories";
+import { CATEGORIES, SCORE_TO_RAG, NORMALIZE_SCORE, NORMALIZE_TIER } from "@/lib/constants/categories";
 
 // Inbound from n8n audit engine. Updates audit + categories on completion.
 // Also handles status='failed' from the engine.
@@ -186,7 +186,7 @@ export async function POST(request: NextRequest) {
     .update({
       status: "awaiting_review",
       total_opportunity_gbp: payload.total_opportunity_gbp,
-      final_tier: payload.final_tier,
+      final_tier: NORMALIZE_TIER(payload.final_tier, payload.total_opportunity_gbp),
       audit_size_score: payload.audit_size_score ?? null,
       executive_summary: payload.executive_summary ?? null,
       flagged_for_review: payload.flagged_for_review,

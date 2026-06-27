@@ -59,3 +59,22 @@ export function SUGGEST_TIER(totalGbp: number | null | undefined): string | null
 
 export const TIERS = ["Starter", "Standard", "Growth", "Established", "Enterprise"] as const;
 export type Tier = typeof TIERS[number];
+
+/**
+ * Coerces an incoming final_tier to a valid app tier.
+ *
+ * Uses the engine's value if it matches one of the canonical tiers
+ * (case-insensitively); otherwise derives the tier from the total
+ * opportunity GBP via SUGGEST_TIER. Guarantees a value the DB's
+ * audits_final_tier_check constraint accepts (or null).
+ */
+export function NORMALIZE_TIER(
+  raw: string | null | undefined,
+  totalGbp: number | null | undefined
+): string | null {
+  if (raw) {
+    const match = TIERS.find((t) => t.toLowerCase() === raw.trim().toLowerCase());
+    if (match) return match;
+  }
+  return SUGGEST_TIER(totalGbp);
+}
