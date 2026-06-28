@@ -182,7 +182,13 @@ export async function POST(request: NextRequest) {
 
   // Initial run -> awaiting_review (questions shown); final run -> final_review.
   // Neither run produces a PDF — that's the separate Generate PDF workflow.
-  const nextStatus = audit.run_stage === "final" ? "final_review" : "awaiting_review";
+  const isFinal = audit.run_stage === "final";
+  const nextStatus = isFinal ? "final_review" : "awaiting_review";
+
+  // The final run is the polished, full-context result — it is never left
+  // flagged for review (flags are an initial-run signal for asking questions).
+  const flaggedForReview = isFinal ? false : payload.flagged_for_review;
+  const flagReasons = isFinal ? [] : payload.flag_reasons;
 
   const { error: updateError } = await service
     .from("audits")
@@ -192,8 +198,8 @@ export async function POST(request: NextRequest) {
       final_tier: NORMALIZE_TIER(payload.final_tier, payload.total_opportunity_gbp),
       audit_size_score: payload.audit_size_score ?? null,
       executive_summary: payload.executive_summary ?? null,
-      flagged_for_review: payload.flagged_for_review,
-      flag_reasons: payload.flag_reasons,
+      flagged_for_review: flaggedForReview,
+      flag_reasons: flagReasons,
       audit_run_at: new Date().toISOString(),
     })
     .eq("id", payload.audit_id);

@@ -109,16 +109,21 @@ export default async function AuditDetailPage({ params }: { params: { id: string
   let pdfUrl: string | null = null;
 
   if (audit.transcript_path) {
+    // Tolerate paths that include the bucket prefix (e.g. "transcripts/…").
+    const key = String(audit.transcript_path).replace(/^transcripts\//, "");
     const { data } = await service.storage
       .from("transcripts")
-      .createSignedUrl(audit.transcript_path, 300);
+      .createSignedUrl(key, 300);
     transcriptUrl = data?.signedUrl ?? null;
   }
 
   if (audit.pdf_path) {
+    // n8n stores the path with the bucket name in it ("pdfs/…"); strip it so
+    // the signed URL resolves to the actual object.
+    const key = String(audit.pdf_path).replace(/^pdfs\//, "");
     const { data } = await service.storage
       .from("pdfs")
-      .createSignedUrl(audit.pdf_path, 300);
+      .createSignedUrl(key, 300);
     pdfUrl = data?.signedUrl ?? null;
   }
 

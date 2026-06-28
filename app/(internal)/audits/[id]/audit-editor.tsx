@@ -633,12 +633,25 @@ export function AuditEditor({
             </Button>
           )}
 
-          {/* Generate PDF — once the final audit exists */}
-          {audit.status === "final_review" && (
-            <Button variant="secondary" size="sm" loading={generatingPdf} onClick={handleGeneratePdf}>
+          {/* Generate PDF — once the final audit exists and no PDF yet */}
+          {audit.status === "final_review" && !audit.pdf_path && !generatingPdf && (
+            <Button variant="primary" size="sm" onClick={handleGeneratePdf}>
               <FileText className="h-4 w-4" />
-              {audit.pdf_path ? "Regenerate PDF" : "Generate PDF"}
+              Generate PDF
             </Button>
+          )}
+          {audit.status === "final_review" && !audit.pdf_path && generatingPdf && (
+            <span className="text-xs text-[--text-tertiary]">Generating PDF — this updates automatically when it’s ready…</span>
+          )}
+
+          {/* View PDF — once the PDF is ready (opens in a new browser tab) */}
+          {audit.pdf_path && pdfUrl && (audit.status === "final_review" || audit.status === "sent") && (
+            <a href={pdfUrl} target="_blank" rel="noopener noreferrer">
+              <Button variant="secondary" size="sm">
+                <ExternalLink className="h-4 w-4" />
+                View PDF
+              </Button>
+            </a>
           )}
 
           {/* Approve & Send — once the PDF is ready */}
@@ -647,9 +660,6 @@ export function AuditEditor({
               <Send className="h-4 w-4" />
               Approve &amp; Send
             </Button>
-          )}
-          {audit.status === "final_review" && !audit.pdf_path && (
-            <span className="text-xs text-[--text-tertiary]">Generate the PDF to enable Approve &amp; Send.</span>
           )}
           {audit.status === "sent" && (
             <span className="text-xs text-emerald-600">Approved &amp; sent to client.</span>
