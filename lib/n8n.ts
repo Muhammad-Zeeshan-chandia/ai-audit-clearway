@@ -343,16 +343,33 @@ export async function fireAskQuestionsWebhook(
 }
 
 // "Generate PDF" — separate workflow; builds + stores the PDF, then calls
-// /api/webhooks/pdf-ready.
-export async function firePdfGenWebhook(
-  payload: {
-    audit_id: string;
-    callback_url: string;
-    categories: Array<{ category_number: number; category_name: string; report_section: string | null }>;
+// /api/webhooks/pdf-ready. CLIENT-FACING: only what belongs in the client's
+// report — no internal scoring/flags (confidence, evidence, review flags, etc.).
+export interface PdfGenPayload {
+  audit_id: string;
+  callback_url: string;
+  business: {
+    business_name: string;
+    owner_name: string | null;
+  };
+  summary: {
     executive_summary: string | null;
     final_tier: string | null;
     total_opportunity_gbp: number | null;
-  },
+  };
+  categories: Array<{
+    category_number: number;
+    category_name: string;
+    rag: string | null;                 // Red / Amber / Green status
+    gbp_impact_annual: number | null;   // £ opportunity for this area
+    gbp_calculation: string | null;     // how that figure was reached
+    solution_category: string | null;   // recommended solution
+    report_section: string | null;      // the written narrative for the client
+  }>;
+}
+
+export async function firePdfGenWebhook(
+  payload: PdfGenPayload,
   auditId: string
 ): Promise<void> {
   return fireWebhook("N8N_PDF_GEN_WEBHOOK_URL", payload, auditId);
