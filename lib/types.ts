@@ -153,3 +153,20 @@ export interface ClientFollowup {
   submitted_by_user_id: string | null;
   created_at: string;
 }
+
+export type ProposalStatus = "generating" | "ready" | "sending" | "sent" | "failed";
+
+export interface Proposal {
+  id: string;
+  audit_id: string;
+  client_id: string;
+  status: ProposalStatus;
+  pdf_path: string | null;
+  pdf_generated_at: string | null;
+  instructions: string | null;
+  regenerate_count: number;
+  sent_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { AuditStatus, FinalTier, RAG } from "@/lib/types";
+import type { AuditStatus, FinalTier, RAG, ProposalStatus } from "@/lib/types";
 
 type BadgeVariant = "default" | "success" | "warning" | "danger" | "accent" | "neutral";
 
@@ -48,6 +48,18 @@ export function AuditStatusBadge({ status }: { status: AuditStatus }) {
     sent:                   { label: "Sent",                   variant: "success" },
     failed:                 { label: "Failed",                 variant: "danger"  },
     archived:               { label: "Archived",               variant: "neutral" },
+  };
+  const { label, variant } = map[status] ?? { label: status, variant: "default" };
+  return <Badge variant={variant}>{label}</Badge>;
+}
+
+export function ProposalStatusBadge({ status }: { status: ProposalStatus }) {
+  const map: Record<ProposalStatus, { label: string; variant: BadgeVariant }> = {
+    generating: { label: "Generating", variant: "accent"  },
+    ready:      { label: "Ready",      variant: "warning" },
+    sending:    { label: "Sending",    variant: "accent"  },
+    sent:       { label: "Sent",       variant: "success" },
+    failed:     { label: "Failed",     variant: "danger"  },
   };
   const { label, variant } = map[status] ?? { label: status, variant: "default" };
   return <Badge variant={variant}>{label}</Badge>;

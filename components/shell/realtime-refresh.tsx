@@ -13,6 +13,7 @@ const TABLES = [
   "questionnaires",
   "discovery_calls",
   "client_followups",
+  "proposals",
 ] as const;
 
 /**

@@ -48,6 +48,7 @@ export default async function AuditDetailPage({ params }: { params: { id: string
     { data: clientFollowupsRaw },
     { data: followupAnswersRaw },
     { data: siblingAuditsRaw },
+    { data: proposalRaw },
   ] = await Promise.all([
     service
       .from("questionnaires")
@@ -103,6 +104,12 @@ export default async function AuditDetailPage({ params }: { params: { id: string
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(3),
+
+    service
+      .from("proposals")
+      .select("id, status")
+      .eq("audit_id", params.id)
+      .maybeSingle(),
   ]);
 
   let transcriptUrl: string | null = null;
@@ -217,6 +224,7 @@ export default async function AuditDetailPage({ params }: { params: { id: string
         clientFollowups={(clientFollowupsRaw ?? []) as unknown as ClientFollowupRow[]}
         followupAnswers={(followupAnswersRaw ?? []) as Array<{ id: string; category_number: number | null; question_text: string; answer_text: string; submitted_at: string }>}
         siblingAudits={siblingAudits}
+        proposal={(proposalRaw as { id: string; status: string } | null) ?? null}
       />
     </div>
   );

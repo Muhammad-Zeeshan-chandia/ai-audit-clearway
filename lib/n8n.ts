@@ -381,3 +381,138 @@ export async function fireDeletionConfirmationWebhook(
 ): Promise<void> {
   return fireWebhook("N8N_DELETION_CONFIRMATION_WEBHOOK_URL", payload, auditId);
 }
+
+// ── Proposals ──────────────────────────────────────────────────────────────
+// "Build Proposal" — separate workflow that turns the finished audit (its PDF
+// + structured data) into a proposal PDF, uploads it to the `pdfs` bucket, and
+// calls /api/webhooks/proposal-ready. CLIENT-FACING: only what belongs in the
+// proposal — no internal scoring/flags.
+export interface ProposalGenPayload {
+  proposal_id: string;
+  audit_id: string;
+  callback_url: string;
+  instructions: string | null;        // staff notes for (re)generation
+  regenerate_count: number;
+  business: {
+    business_name: string;
+    owner_name: string | null;
+  };
+  summary: {
+    executive_summary: string | null;
+    final_tier: string | null;
+    total_opportunity_gbp: number | null;
+  };
+  audit_pdf_path: string | null;       // the finished audit PDF in the `pdfs` bucket
+  audit_pdf_url: string | null;        // signed URL so n8n can fetch it
+  categories: Array<{
+    category_number: number;
+    category_name: string;
+    rag: string | null;
+    gbp_impact_annual: number | null;
+    gbp_calculation: string | null;
+    solution_category: string | null;
+    report_section: string | null;
+  }>;
+}
+
+/**
+ * Loads everything the proposal workflow needs from the finished audit and
+ * returns it shaped as ProposalGenPayload, including a signed URL for the
+ * finished audit PDF (from the `pdfs` bucket).
+ */
+export async function buildProposalGenPayload(
+  service: SupabaseClient,
+  args: {
+    auditId: string;
+    proposalId: string;
+    instructions: string | null;
+    regenerateCount: number;
+    callbackUrl: string;
+  }
+): Promise<ProposalGenPayload | null> {
+  const { auditId, proposalId, instructions, regenerateCount, callbackUrl } = args;
+
+  const { data: audit } = await service
+    .from("audits")
+    .select(
+      "id, pdf_path, executive_summary, final_tier, total_opportunity_gbp, clients(business_name, owner_name)"
+    )
+    .eq("id", auditId)
+    .single();
+
+  if (!audit) return null;
+
+  type ClientShape = { business_name: string; owner_name: string | null };
+  const rawClient = audit.clients as ClientShape[] | ClientShape | null;
+  const client = Array.isArray(rawClient) ? rawClient[0] : rawClient;
+
+  const { data: cats } = await service
+    .from("audit_categories")
+    .select("category_number, category_name, rag, gbp_impact_annual, gbp_calculation, solution_category, report_section")
+    .eq("audit_id", auditId)
+    .order("category_number");
+
+  // Sign the finished audit PDF so n8n can fetch it. n8n stores the path with
+  // the bucket name in it ("pdfs/…"); strip it so the signed URL resolves.
+  const auditRec = audit as Record<string, unknown>;
+  const pdfPath = (auditRec.pdf_path as string | null) ?? null;
+  let auditPdfUrl: string | null = null;
+  if (pdfPath) {
+    const key = pdfPath.replace(/^pdfs\//, "");
+    const { data } = await service.storage.from("pdfs").createSignedUrl(key, 600);
+    auditPdfUrl = data?.signedUrl ?? null;
+  }
+
+  return {
+    proposal_id: proposalId,
+    audit_id: auditId,
+    callback_url: callbackUrl,
+    instructions,
+    regenerate_count: regenerateCount,
+    business: {
+      business_name: client?.business_name ?? "",
+      owner_name: client?.owner_name ?? null,
+    },
+    summary: {
+      executive_summary: (auditRec.executive_summary as string | null) ?? null,
+      final_tier: (auditRec.final_tier as string | null) ?? null,
+      total_opportunity_gbp:
+        auditRec.total_opportunity_gbp != null ? Number(auditRec.total_opportunity_gbp) : null,
+    },
+    audit_pdf_path: pdfPath,
+    audit_pdf_url: auditPdfUrl,
+    categories: (cats ?? []).map((c) => ({
+      category_number: c.category_number,
+      category_name: c.category_name,
+      rag: (c.rag as string | null) ?? null,
+      gbp_impact_annual: c.gbp_impact_annual != null ? Number(c.gbp_impact_annual) : null,
+      gbp_calculation: (c.gbp_calculation as string | null) ?? null,
+      solution_category: (c.solution_category as string | null) ?? null,
+      report_section: (c.report_section as string | null) ?? null,
+    })),
+  };
+}
+
+export async function fireGenerateProposalWebhook(
+  payload: ProposalGenPayload,
+  auditId: string
+): Promise<void> {
+  return fireWebhook("N8N_GENERATE_PROPOSAL_WEBHOOK_URL", payload, auditId);
+}
+
+export interface SendProposalPayload {
+  proposal_id: string;
+  audit_id: string;
+  client_email: string;
+  client_name: string | null;
+  business_name: string;
+  proposal_pdf_path: string | null;
+  proposal_pdf_url: string | null;
+}
+
+export async function fireSendProposalWebhook(
+  payload: SendProposalPayload,
+  auditId: string
+): Promise<void> {
+  return fireWebhook("N8N_SEND_PROPOSAL_WEBHOOK_URL", payload, auditId);
+}

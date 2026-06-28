@@ -23,9 +23,10 @@ export async function POST(
 
   if (auditErr || !audit) return NextResponse.json({ error: "Audit not found" }, { status: 404 });
 
-  // Approve & Send is only available once the final audit is reviewed AND the
-  // PDF has been generated.
-  if (audit.status !== "final_review") {
+  // Approve & Send is available once the final audit is reviewed AND the PDF
+  // has been generated. After sending, the same action re-sends the PDF.
+  const isResend = audit.status === "sent";
+  if (audit.status !== "final_review" && !isResend) {
     return NextResponse.json(
       { error: "Run the final audit before approving." },
       { status: 409 }
@@ -44,12 +45,12 @@ export async function POST(
 
   const now = new Date().toISOString();
 
-  await service.from("audits").update({
-    status: "sent",
-    reviewed_by: user.id,
-    reviewed_at: now,
-    sent_at: now,
-  }).eq("id", params.id);
+  // On a re-send, leave the original review metadata intact; just refresh sent_at.
+  await service.from("audits").update(
+    isResend
+      ? { sent_at: now }
+      : { status: "sent", reviewed_by: user.id, reviewed_at: now, sent_at: now }
+  ).eq("id", params.id);
 
   if (client) {
     fireSendAuditWebhook(
@@ -72,7 +73,7 @@ export async function POST(
 
   await service.from("audit_log").insert({
     actor_id: user.id,
-    action: "audit.approved_and_sent",
+    action: isResend ? "audit.resent" : "audit.approved_and_sent",
     entity_type: "audit",
     entity_id: params.id,
     metadata: { client_email: client?.email },

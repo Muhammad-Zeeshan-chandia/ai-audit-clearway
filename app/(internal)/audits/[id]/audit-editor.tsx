@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   AlertTriangle, CheckCircle, Send, RefreshCw, FileText,
-  Download, ChevronDown, Save, ExternalLink,
+  Download, ChevronDown, Save, ExternalLink, ScrollText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -105,6 +105,7 @@ interface Props {
   clientFollowups: ClientFollowupRow[];
   followupAnswers: FollowupAnswerRow[];
   siblingAudits: AuditVersion[];
+  proposal: { id: string; status: string } | null;
 }
 
 const STATUS_STEPS: Array<{ key: string; label: string; field: keyof AuditProp }> = [
@@ -245,6 +246,7 @@ export function AuditEditor({
   clientFollowups,
   followupAnswers,
   siblingAudits,
+  proposal,
 }: Props) {
   const router = useRouter();
 
@@ -288,6 +290,7 @@ export function AuditEditor({
   const [actionError, setActionError]             = useState<string | null>(null);
   const [actionMessage, setActionMessage]           = useState<string | null>(null);
   const [sendingQuestionnaire, setSendingQuestionnaire] = useState(false);
+  const [buildingProposal, setBuildingProposal]     = useState(false);
 
   // ── Tier override ──
   async function handleTierChange(newTier: string) {
@@ -469,6 +472,31 @@ export function AuditEditor({
     }
   }
 
+  // ── Build Proposal — generate a proposal from the finished audit ──
+  async function handleBuildProposal() {
+    setBuildingProposal(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/audits/${audit.id}/build-proposal`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setActionError((json as { error?: string }).error ?? "Failed to start proposal generation.");
+        return;
+      }
+      const proposalId = (json as { proposal_id?: string }).proposal_id;
+      if (proposalId) {
+        router.push(`/proposals/${proposalId}`);
+      } else {
+        router.refresh();
+      }
+    } catch {
+      setActionError("Network error starting proposal generation.");
+    } finally {
+      setBuildingProposal(false);
+    }
+  }
+
   // ── Send Questionnaire ──
   async function handleSendQuestionnaire() {
     setSendingQuestionnaire(true);
@@ -644,8 +672,8 @@ export function AuditEditor({
             <span className="text-xs text-[--text-tertiary]">Generating PDF — this updates automatically when it’s ready…</span>
           )}
 
-          {/* View PDF — once the PDF is ready (opens in a new browser tab) */}
-          {audit.pdf_path && pdfUrl && (audit.status === "final_review" || audit.status === "sent") && (
+          {/* View PDF — always available once the PDF is ready (any status) */}
+          {audit.pdf_path && pdfUrl && (
             <a href={pdfUrl} target="_blank" rel="noopener noreferrer">
               <Button variant="secondary" size="sm">
                 <ExternalLink className="h-4 w-4" />
@@ -654,11 +682,28 @@ export function AuditEditor({
             </a>
           )}
 
-          {/* Approve & Send — once the PDF is ready */}
-          {audit.status === "final_review" && audit.pdf_path && (
+          {/* Build / View Proposal — once the final audit PDF is ready */}
+          {audit.pdf_path && (audit.status === "final_review" || audit.status === "sent") && (
+            proposal ? (
+              <Link href={`/proposals/${proposal.id}`}>
+                <Button variant="secondary" size="sm">
+                  <ScrollText className="h-4 w-4" />
+                  View Proposal
+                </Button>
+              </Link>
+            ) : (
+              <Button variant="secondary" size="sm" loading={buildingProposal} onClick={handleBuildProposal}>
+                <ScrollText className="h-4 w-4" />
+                Build Proposal
+              </Button>
+            )
+          )}
+
+          {/* Approve & Send / Resend — available whenever the PDF is ready */}
+          {audit.pdf_path && pdfUrl && (audit.status === "final_review" || audit.status === "sent") && (
             <Button variant="primary" size="sm" onClick={() => setApproveOpen(true)}>
               <Send className="h-4 w-4" />
-              Approve &amp; Send
+              {audit.status === "sent" ? "Resend audit" : "Approve & Send"}
             </Button>
           )}
           {audit.status === "sent" && (
@@ -1153,12 +1198,23 @@ export function AuditEditor({
         </div>
       )}
 
-      {/* Approve modal */}
-      <Dialog open={approveOpen} onClose={() => setApproveOpen(false)} title="Approve & Send" size="sm"
-        description="The finished audit PDF will be emailed to the client and the audit marked as Sent. This cannot be undone.">
+      {/* Approve / Resend modal */}
+      <Dialog
+        open={approveOpen}
+        onClose={() => setApproveOpen(false)}
+        title={audit.status === "sent" ? "Resend audit" : "Approve & Send"}
+        size="sm"
+        description={
+          audit.status === "sent"
+            ? "The audit PDF will be emailed to the client again."
+            : "The finished audit PDF will be emailed to the client and the audit marked as Sent. This cannot be undone."
+        }
+      >
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => setApproveOpen(false)} disabled={approving}>Cancel</Button>
-          <Button variant="primary" size="sm" loading={approving} onClick={handleApprove}>Confirm &amp; Send</Button>
+          <Button variant="primary" size="sm" loading={approving} onClick={handleApprove}>
+            {audit.status === "sent" ? "Confirm resend" : "Confirm & Send"}
+          </Button>
         </DialogFooter>
       </Dialog>
     </div>
