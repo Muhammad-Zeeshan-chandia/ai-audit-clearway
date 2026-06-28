@@ -23,9 +23,9 @@ const STATUS_ORDER: AuditStatus[] = [
   "awaiting_questionnaire",
   "audit_running",
   "awaiting_review",
-  "awaiting_client_followup",
-  "followup_received",
-  "approved",
+  "awaiting_answers",
+  "answers_received",
+  "final_review",
   "sent",
   "failed",
 ];
@@ -33,10 +33,10 @@ const STATUS_ORDER: AuditStatus[] = [
 const STATUS_LABELS: Record<string, string> = {
   awaiting_questionnaire: "Awaiting Q.",
   audit_running: "Running",
-  awaiting_review: "Awaiting Review",
-  awaiting_client_followup: "Awaiting follow-up",
-  followup_received: "Follow-up received",
-  approved: "Approved",
+  awaiting_review: "Initial review",
+  awaiting_answers: "Awaiting answers",
+  answers_received: "Answers received",
+  final_review: "Final review",
   sent: "Sent",
   failed: "Failed",
 };
